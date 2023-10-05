@@ -1,0 +1,1 @@
+type t = TypeVar of int | Constr of string * t list

@@ -1,0 +1,14 @@
+(executable
+ (name main)
+ (flags
+  (:standard -warn-error -a))
+  (preprocess (pps ppx_sexp_conv))
+  (libraries
+   sexplib)
+ (promote (until-clean)))
+
+(ocamllex
+ (modules lexer))
+
+(menhir
+ (modules parser))
