@@ -11,43 +11,43 @@ let addtyp x = (x, Type.gentyp ())
 %token NOT
 %token MINUS
 %token PLUS
-%token MINUS_DOT
-%token PLUS_DOT
-%token AST_DOT
-%token SLASH_DOT
-%token EQUAL
-%token LESS_GREATER
-%token LESS_EQUAL
-%token GREATER_EQUAL
-%token LESS
-%token GREATER
+%token FMINUS
+%token FPLUS
+%token FTIMES
+%token FDIV
+%token EQ
+%token NEQ
+%token LE
+%token GE
+%token LT
+%token GT
 %token IF
 %token THEN
 %token ELSE
-%token <Id.t> IDENT
+%token <Id.t> ID
 %token LET
 %token IN
 %token REC
 %token COMMA
 %token ARRAY_CREATE
 %token DOT
-%token LESS_MINUS
-%token SEMICOLON
-%token LPAREN
-%token RPAREN
+%token ASSIGN
+%token SEMI
+%token LPAR
+%token RPAR
 %token EOF
 
 /* (* 優先順位とassociativityの定義（低い方から高い方へ） (caml2html: parser_prior) *) */
 %nonassoc IN
 %right prec_let
-%right SEMICOLON
+%right SEMI
 %right prec_if
-%right LESS_MINUS
+%right ASSIGN
 %nonassoc prec_tuple
 %left COMMA
-%left EQUAL LESS_GREATER LESS GREATER LESS_EQUAL GREATER_EQUAL
-%left PLUS MINUS PLUS_DOT MINUS_DOT
-%left AST_DOT SLASH_DOT
+%left EQ NEQ LT GT LE GE
+%left PLUS MINUS FPLUS FMINUS
+%left FTIMES FDIV
 %right prec_unary_minus
 %left prec_app
 %left DOT
@@ -59,9 +59,9 @@ let addtyp x = (x, Type.gentyp ())
 %%
 
 simple_exp: /* (* 括弧をつけなくても関数の引数になれる式 (caml2html: parser_simple) *) */
-| LPAREN exp RPAREN
+| LPAR exp RPAR
     { $2 }
-| LPAREN RPAREN
+| LPAR RPAR
     { Unit }
 | BOOL
     { Bool($1) }
@@ -69,9 +69,9 @@ simple_exp: /* (* 括弧をつけなくても関数の引数になれる式 (cam
     { Int($1) }
 | FLOAT
     { Float($1) }
-| IDENT
+| ID
     { Var($1) }
-| simple_exp DOT LPAREN exp RPAREN
+| simple_exp DOT LPAR exp RPAR
     { Get($1, $4) }
 
 exp: /* (* 一般の式 (caml2html: parser_exp) *) */
@@ -89,33 +89,33 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
     { Add($1, $3) }
 | exp MINUS exp
     { Sub($1, $3) }
-| exp EQUAL exp
+| exp EQ exp
     { Eq($1, $3) }
-| exp LESS_GREATER exp
+| exp NEQ exp
     { Not(Eq($1, $3)) (* some float comparisons differ from OCaml for NaN; see: https://github.com/esumii/min-caml/issues/13#issuecomment-1147032750 *) }
-| exp LESS exp
+| exp LT exp
     { Not(LE($3, $1)) }
-| exp GREATER exp
+| exp GT exp
     { Not(LE($1, $3)) }
-| exp LESS_EQUAL exp
+| exp LE exp
     { LE($1, $3) }
-| exp GREATER_EQUAL exp
+| exp GE exp
     { LE($3, $1) }
 | IF exp THEN exp ELSE exp
     %prec prec_if
     { If($2, $4, $6) }
-| MINUS_DOT exp
+| FMINUS exp
     %prec prec_unary_minus
     { FNeg($2) }
-| exp PLUS_DOT exp
+| exp FPLUS exp
     { FAdd($1, $3) }
-| exp MINUS_DOT exp
+| exp FMINUS exp
     { FSub($1, $3) }
-| exp AST_DOT exp
+| exp FTIMES exp
     { FMul($1, $3) }
-| exp SLASH_DOT exp
+| exp FDIV exp
     { FDiv($1, $3) }
-| LET IDENT EQUAL exp IN exp
+| LET ID EQ exp IN exp
     %prec prec_let
     { Let(addtyp $2, $4, $6) }
 | LET REC fundef IN exp
@@ -127,11 +127,11 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
 | elems
     %prec prec_tuple
     { Tuple($1) }
-| LET LPAREN pat RPAREN EQUAL exp IN exp
+| LET LPAR pat RPAR EQ exp IN exp
     { LetTuple($3, $6, $8) }
-| simple_exp DOT LPAREN exp RPAREN LESS_MINUS exp
+| simple_exp DOT LPAR exp RPAR ASSIGN exp
     { Put($1, $4, $7) }
-| exp SEMICOLON exp
+| exp SEMI exp
     { Let((Id.gentmp Type.Unit, Type.Unit), $1, $3) }
 | ARRAY_CREATE simple_exp simple_exp
     %prec prec_app
@@ -143,13 +143,13 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
            (Parsing.symbol_end ())) }
 
 fundef:
-| IDENT formal_args EQUAL exp
+| ID formal_args EQ exp
     { { name = addtyp $1; args = $2; body = $4 } }
 
 formal_args:
-| IDENT formal_args
+| ID formal_args
     { addtyp $1 :: $2 }
-| IDENT
+| ID
     { [addtyp $1] }
 
 actual_args:
@@ -167,7 +167,7 @@ elems:
     { [$1; $3] }
 
 pat:
-| pat COMMA IDENT
+| pat COMMA ID
     { $1 @ [addtyp $3] }
-| IDENT COMMA IDENT
+| ID COMMA ID
     { [addtyp $1; addtyp $3] }

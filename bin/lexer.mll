@@ -1,100 +1,69 @@
 {
-(* lexerが利用する変数、関数、型などの定義 *)
-open Parser
-open Type
+    exception Eof
+    open Parser
 }
-
-(* 正規表現の略記 *)
-let space = [' ' '\t' '\n' '\r']
 let digit = ['0'-'9']
-let lower = ['a'-'z']
-let upper = ['A'-'Z']
+let space = ' ' | '\t' | '\r' | '\n'
+let alpha = ['a'-'z' 'A'-'Z' '_' ]
+let ident = alpha (alpha | digit | ''')*
 
 rule token = parse
-| space+
-    { token lexbuf }
-| "(*"
-    { comment lexbuf; (* ネストしたコメントのためのトリック *)
-      token lexbuf }
-| '('
-    { LPAREN }
-| ')'
-    { RPAREN }
-| "true"
-    { BOOL(true) }
-| "false"
-    { BOOL(false) }
-| "not"
-    { NOT }
-| digit+ (* 整数を字句解析するルール (caml2html: lexer_int) *)
-    { INT(int_of_string (Lexing.lexeme lexbuf)) }
-| digit+ ('.' digit*)? (['e' 'E'] ['+' '-']? digit+)?
-    { FLOAT(float_of_string (Lexing.lexeme lexbuf)) }
-| '-' (* -.より後回しにしなくても良い? 最長一致? *)
-    { MINUS }
-| '+' (* +.より後回しにしなくても良い? 最長一致? *)
-    { PLUS }
-| "-."
-    { MINUS_DOT }
-| "+."
-    { PLUS_DOT }
-| "*."
-    { AST_DOT }
-| "/."
-    { SLASH_DOT }
-| '='
-    { EQUAL }
-| "<>"
-    { LESS_GREATER }
-| "<="
-    { LESS_EQUAL }
-| ">="
-    { GREATER_EQUAL }
-| '<'
-    { LESS }
-| '>'
-    { GREATER }
-| "if"
-    { IF }
-| "then"
-    { THEN }
-| "else"
-    { ELSE }
-| "let"
-    { LET }
-| "in"
-    { IN }
-| "rec"
-    { REC }
-| ','
-    { COMMA }
-| '_'
-    { IDENT(Id.gentmp Type.Unit) }
-| "Array.create" | "Array.make" (* [XX] ad hoc *)
-    { ARRAY_CREATE }
-| '.'
-    { DOT }
-| "<-"
-    { LESS_MINUS }
-| ';'
-    { SEMICOLON }
-| eof
-    { EOF }
-| lower (digit|lower|upper|'_')* (* 他の「予約語」より後でないといけない *)
-    { IDENT(Lexing.lexeme lexbuf) }
-| _
-    { failwith
-        (Printf.sprintf "unknown token %s near characters %d-%d"
-           (Lexing.lexeme lexbuf)
-           (Lexing.lexeme_start lexbuf)
-           (Lexing.lexeme_end lexbuf)) }
+| '\n'         {Lexing.new_line lexbuf; token lexbuf}
+| (' '|'\t'|'\r') +       { token lexbuf }
+
+| "(*"         { comment lexbuf; token lexbuf }
+| "+"          { PLUS }
+(* | "*"          { TIMES } *)
+| "-"          { MINUS }
+(* | "/"          { DIV } *)
+
+| "+."         { FPLUS }
+| "*."         { FTIMES }
+| "-."         { FMINUS }
+| "/."         { FDIV }
+
+| "="          { EQ }
+| "<>"         { NEQ }
+| "_"          { ID ("__" ^ Id.gentmp Type.Unit) }
+
+| "<"          { LT }
+| "<="         { LE }
+| ">"          { GT }
+| ">="         { GE }
+
+| "<-"        { ASSIGN }
+
+| "let"        { LET }
+| "rec"        { REC }
+| "in"         { IN }
+
+| "if"         { IF }
+| "then"       { THEN }
+| "else"       { ELSE }
+| "not"        { NOT }
+
+| "true"       { BOOL (true) }
+| "false"      { BOOL (false) }
+| "Array.make" | "Array.create" { ARRAY_CREATE }
+
+| "."          { DOT }
+| ","          { COMMA }
+| "("          { LPAR }
+| ")"          { RPAR }
+| ";"          { SEMI }
+
+| digit+ as n  { INT (int_of_string n) }
+| digit+ ('.' digit*)? (['e' 'E'] ['+' '-']? digit+)? as f { FLOAT (float_of_string f) }
+| ident  as id { ID id }
+| eof          { EOF }
+| _ { failwith (
+    "Unknown Token: " ^ Lexing.lexeme lexbuf
+    ^ " at line " ^ string_of_int (Lexing.lexeme_start_p lexbuf).pos_lnum
+    ^ ", character " ^ string_of_int ((Lexing.lexeme_start_p lexbuf).pos_cnum - (Lexing.lexeme_start_p lexbuf).pos_bol)) }
+
 and comment = parse
-| "*)"
-    { () }
-| "(*"
-    { comment lexbuf;
-      comment lexbuf }
-| eof
-    { Format.eprintf "warning: unterminated comment@." }
-| _
-    { comment lexbuf }
+| "*)"        { () }
+| '\n'        { Lexing.new_line lexbuf; comment lexbuf }
+| "(*"        { comment lexbuf; comment lexbuf }
+| eof         { failwith "Comment not terminated" }
+| _           { comment lexbuf }
