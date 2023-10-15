@@ -1,8 +1,10 @@
 (executable
+ (preprocess (pps ppx_deriving.show))
  (public_name minimized)
  (name main)
- (libraries minimized)
- (flags (:standard -warn-error -a)))
+ (flags (:standard -warn-error -a))
+ )
+ 
 
 (ocamllex (modules lexer))
 (ocamlyacc (modules parser))

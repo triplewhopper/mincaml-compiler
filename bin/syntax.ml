@@ -23,5 +23,5 @@ type t = (* MinCamlの構文を表現するデータ型 (caml2html: syntax_t) *)
   | LetTuple of (Id.t * Type.t) list * t * t
   | Array of t * t
   | Get of t * t
-  | Put of t * t * t
-and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
+  | Put of t * t * t [@@deriving show]
+and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t } [@@deriving show]
