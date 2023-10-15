@@ -1,6 +1,8 @@
 {
     exception Eof
     open Parser
+    let tokens = ref []
+    let add t = tokens := t :: !tokens; t
 }
 let digit = ['0'-'9']
 let space = ' ' | '\t' | '\r' | '\n'
@@ -12,50 +14,51 @@ rule token = parse
 | (' '|'\t'|'\r') +       { token lexbuf }
 
 | "(*"         { comment lexbuf; token lexbuf }
-| "+"          { PLUS }
+| "+"          { add PLUS }
 (* | "*"          { TIMES } *)
-| "-"          { MINUS }
+| "-"          { add MINUS }
 (* | "/"          { DIV } *)
 
-| "+."         { FPLUS }
-| "*."         { FTIMES }
-| "-."         { FMINUS }
-| "/."         { FDIV }
+| "+."         { add FPLUS }
+| "*."         { add FTIMES }
+| "-."         { add FMINUS }
+| "/."         { add FDIV }
 
-| "="          { EQ }
-| "<>"         { NEQ }
-| "_"          { ID ("__" ^ Id.gentmp Type.Unit) }
+| "="          { add EQ }
+| "<>"         { add NEQ }
+| "_"          { add (ID ("__" ^ Id.gentmp Type.Unit)) }
 
-| "<"          { LT }
-| "<="         { LE }
-| ">"          { GT }
-| ">="         { GE }
+| "<"          { add LT }
+| "<="         { add LE }
+| ">"          { add GT }
+| ">="         { add GE }
 
-| "<-"        { ASSIGN }
+| "<-"        { add ASSIGN }
 
-| "let"        { LET }
-| "rec"        { REC }
-| "in"         { IN }
+| "let"        { add LET }
+| "rec"        { add REC }
+| "in"         { add IN }
 
-| "if"         { IF }
-| "then"       { THEN }
-| "else"       { ELSE }
-| "not"        { NOT }
+| "if"         { add IF }
+| "then"       { add THEN }
+| "else"       { add ELSE }
+| "not"        { add NOT }
 
-| "true"       { BOOL (true) }
-| "false"      { BOOL (false) }
-| "Array.make" | "Array.create" { ARRAY_CREATE }
+| "true"       { add (BOOL (true)) }
+| "false"      { add (BOOL (false)) }
+| "Array.create" { add ARRAY_CREATE }
+| "Array.make" { add ARRAY_MAKE }
 
-| "."          { DOT }
-| ","          { COMMA }
-| "("          { LPAR }
-| ")"          { RPAR }
-| ";"          { SEMI }
+| "."          { add DOT }
+| ","          { add COMMA }
+| "("          { add LPAR }
+| ")"          { add RPAR }
+| ";"          { add SEMI }
 
-| digit+ as n  { INT (int_of_string n) }
-| digit+ ('.' digit*)? (['e' 'E'] ['+' '-']? digit+)? as f { FLOAT (float_of_string f) }
-| ident  as id { ID id }
-| eof          { EOF }
+| digit+ as n  { add (INT n) }
+| digit+ ('.' digit*)? (['e' 'E'] ['+' '-']? digit+)? as f { add (FLOAT f) }
+| ident  as id { add (ID id) }
+| eof          { add EOF }
 | _ { failwith (
     "Unknown Token: " ^ Lexing.lexeme lexbuf
     ^ " at line " ^ string_of_int (Lexing.lexeme_start_p lexbuf).pos_lnum

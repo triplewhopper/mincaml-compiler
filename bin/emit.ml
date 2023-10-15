@@ -1,7 +1,7 @@
 open Asm
 
-let gethi x = Int32.bits_of_float x |> Int32.logand 0xffffffffl (* external gethi : float -> int32 = "gethi" *)
-let getlo x = Int32.shift_right_logical (Int32.bits_of_float x) 32 (* external getlo : float -> int32 = "getlo" *)
+let gethi x = Int64.bits_of_float x |> Int64.logand 0xffffffffL |> Int64.to_int32 (* external gethi : float -> int32 = "gethi" *)
+let getlo x = Int64.shift_right_logical (Int64.bits_of_float x) 32 |> Int64.to_int32 (* external getlo : float -> int32 = "getlo" *)
 
 let stackset = ref S.empty (* すでにSaveされた変数の集合 (caml2html: emit_stackset) *)
 let stackmap = ref [] (* Saveされた変数の、スタックにおける位置 (caml2html: emit_stackmap) *)

@@ -1,9 +1,9 @@
 (* type inference/reconstruction *)
 
 open Syntax
-
+type error_kind = Known of {ast:ast;got:Type.t;expected:Type.t}| Unknown of ast [@@deriving show]
 exception Unify of Type.t * Type.t
-exception Error of t * Type.t * Type.t
+exception Error of error_kind 
 
 let extenv = ref M.empty
 
@@ -22,7 +22,7 @@ let rec deref_typ = function (* 型変数を中身でおきかえる関数 (caml
       t'
   | t -> t
 let rec deref_id_typ (x, t) = (x, deref_typ t)
-let rec deref_term = function
+let rec deref_term ast: ast = let v = match ast.value with 
   | Not(e) -> Not(deref_term e)
   | Neg(e) -> Neg(deref_term e)
   | Add(e1, e2) -> Add(deref_term e1, deref_term e2)
@@ -48,6 +48,7 @@ let rec deref_term = function
   | Get(e1, e2) -> Get(deref_term e1, deref_term e2)
   | Put(e1, e2, e3) -> Put(deref_term e1, deref_term e2, deref_term e3)
   | e -> e
+  in { ast with value = v}
 
 let rec occur r1 = function (* occur check (caml2html: typing_occur) *)
   | Type.Fun(t2s, t2) -> List.exists (occur r1) t2s || occur r1 t2
@@ -80,41 +81,53 @@ let rec unify t1 t2 = (* 型が合うように、型変数への代入をする 
       r2 := Some(t1)
   | _, _ -> raise (Unify(t1, t2))
 
+let raiseUnifyError ~ast ~got ~expected = raise (Error (Known {ast;got;expected}))
+
+(* if ~expected contains typevar, the behavior is undefined. *)
+let try_unify e t ~expected = try unify t expected with Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:(deref_typ t) ~expected:(deref_typ expected)
+
 let rec g env e = (* 型推論ルーチン (caml2html: typing_g) *)
   try
-    match e with
+    match e.value with
     | Unit -> Type.Unit
     | Bool(_) -> Type.Bool
     | Int(_) -> Type.Int
     | Float(_) -> Type.Float
     | Not(e) ->
-        unify Type.Bool (g env e);
+        try_unify e (g env e) ~expected:Type.Bool;
         Type.Bool
     | Neg(e) ->
-        unify Type.Int (g env e);
+        try_unify e (g env e) ~expected:Type.Int;
         Type.Int
     | Add(e1, e2) | Sub(e1, e2) -> (* 足し算（と引き算）の型推論 (caml2html: typing_add) *)
-        unify Type.Int (g env e1);
-        unify Type.Int (g env e2);
+        try_unify e1 (g env e1) ~expected:Type.Int;
+        try_unify e2 (g env e2) ~expected:Type.Int;
         Type.Int
     | FNeg(e) ->
-        unify Type.Float (g env e);
+        try_unify e (g env e) ~expected:Type.Float;
         Type.Float
     | FAdd(e1, e2) | FSub(e1, e2) | FMul(e1, e2) | FDiv(e1, e2) ->
-        unify Type.Float (g env e1);
-        unify Type.Float (g env e2);
+        try_unify e1 (g env e1) ~expected:Type.Float;
+        try_unify e2 (g env e2) ~expected:Type.Float;
         Type.Float
-    | Eq(e1, e2) | LE(e1, e2) ->
-        unify (g env e1) (g env e2);
+    | Eq(e1, e2) | Neq(e1, e2) | LE(e1, e2) | LT(e1, e2) | GE(e1, e2) | GT(e1, e2) ->
+        (* (try unify (g env e1) (g env e2) with Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:(g env e1) ~expected:(g env e2)); *)
+        (try 
+            try_unify e1 (g env e1) ~expected:Type.Int;
+            try_unify e2 (g env e2) ~expected:Type.Int;
+        with Error _  -> (
+            try_unify e1 (g env e1) ~expected:Type.Float;
+            try_unify e2 (g env e2) ~expected:Type.Float;
+        ));
         Type.Bool
     | If(e1, e2, e3) ->
-        unify (g env e1) Type.Bool;
+        try_unify e1 (g env e1) ~expected:Type.Bool;
         let t2 = g env e2 in
         let t3 = g env e3 in
-        unify t2 t3;
+        try_unify e2 t2 ~expected:t3;
         t2
     | Let((x, t), e1, e2) -> (* letの型推論 (caml2html: typing_let) *)
-        unify t (g env e1);
+        try_unify e1 (g env e1) ~expected:t;
         g (M.add x t env) e2
     | Var(x) when M.mem x env -> M.find x env (* 変数の型推論 (caml2html: typing_var) *)
     | Var(x) when M.mem x !extenv -> M.find x !extenv
@@ -125,30 +138,33 @@ let rec g env e = (* 型推論ルーチン (caml2html: typing_g) *)
         t
     | LetRec({ name = (x, t); args = yts; body = e1 }, e2) -> (* let recの型推論 (caml2html: typing_letrec) *)
         let env = M.add x t env in
-        unify t (Type.Fun(List.map snd yts, g (M.add_list yts env) e1));
+        let func = Type.Fun(List.map snd yts, g (M.add_list yts env) e1) in (
+            try unify t func with 
+            Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:t ~expected:func
+        );
         g env e2
     | App(e, es) -> (* 関数適用の型推論 (caml2html: typing_app) *)
         let t = Type.gentyp () in
-        unify (g env e) (Type.Fun(List.map (g env) es, t));
+        try_unify e (g env e) ~expected:(Type.Fun(List.map (g env) es, t));
         t
     | Tuple(es) -> Type.Tuple(List.map (g env) es)
     | LetTuple(xts, e1, e2) ->
-        unify (Type.Tuple(List.map snd xts)) (g env e1);
+        try_unify e1 (g env e1) ~expected:(Type.Tuple(List.map snd xts));
         g (M.add_list xts env) e2
     | Array(e1, e2) -> (* must be a primitive for "polymorphic" typing *)
-        unify (g env e1) Type.Int;
+        try_unify e1 (g env e1) ~expected:Type.Int;
         Type.Array(g env e2)
     | Get(e1, e2) ->
         let t = Type.gentyp () in
-        unify (Type.Array(t)) (g env e1);
-        unify Type.Int (g env e2);
+        try_unify e1 (g env e1) ~expected:(Type.Array(t));
+        try_unify e2 (g env e2) ~expected:Type.Int;
         t
     | Put(e1, e2, e3) ->
         let t = g env e3 in
-        unify (Type.Array(t)) (g env e1);
-        unify Type.Int (g env e2);
+        try_unify e1 (g env e1) ~expected:(Type.Array(t));
+        try_unify e2 (g env e2) ~expected:Type.Int;
         Type.Unit
-  with Unify(t1, t2) -> raise (Error(deref_term e, deref_typ t1, deref_typ t2))
+  with Unify(t1, t2) -> raise (Error (Unknown (deref_term e)))
 
 let f e =
   extenv := M.empty;
