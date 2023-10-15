@@ -1,4 +1,8 @@
 (executable
  (public_name minimized)
  (name main)
- (libraries minimized))
+ (libraries minimized)
+ (flags (:standard -warn-error -a)))
+
+(ocamllex (modules lexer))
+(ocamlyacc (modules parser))
