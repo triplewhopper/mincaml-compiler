@@ -1,8 +1,9 @@
 open Asm
 
-(* for register coalescing *)
-(* [XXX] Callがあったら、そこから先は無意味というか逆効果なので追わない。
-         そのために「Callがあったかどうか」を返り値の第1要素に含める。 *)
+(** for register coalescing *)
+(** \[XXX\] Callがあったら、そこから先は無意味というか逆効果なので追わない。
+
+  そのために「Callがあったかどうか」を返り値の第1要素に含める。 *)
 let rec target' src (dest, t) = function
   | Mov(x) when x = src && is_reg dest ->
       assert (t <> Type.Unit);

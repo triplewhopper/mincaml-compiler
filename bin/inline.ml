@@ -1,6 +1,6 @@
 open KNormal
 
-(* インライン展開する関数の最大サイズ (caml2html: inline_threshold) *)
+(** インライン展開する関数の最大サイズ (caml2html: inline_threshold) *)
 let threshold = ref 0 (* Mainで-inlineオプションによりセットされる *)
 
 let rec size = function
@@ -9,7 +9,7 @@ let rec size = function
   | LetTuple(_, _, e) -> 1 + size e
   | _ -> 1
 
-let rec g env = function (* インライン展開ルーチン本体 (caml2html: inline_g) *)
+let rec g env = function (** インライン展開ルーチン本体 (caml2html: inline_g) *)
   | IfEq(x, y, e1, e2) -> IfEq(x, y, g env e1, g env e2)
   | IfLE(x, y, e1, e2) -> IfLE(x, y, g env e1, g env e2)
   | Let(xt, e1, e2) -> Let(xt, g env e1, g env e2)

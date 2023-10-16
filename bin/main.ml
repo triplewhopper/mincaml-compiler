@@ -2,7 +2,7 @@ let limit = ref 1000
 let _ = Printexc.record_backtrace true
 
 let rec iter n e =
-  (* 最適化処理をくりかえす (caml2html: main_iter) *)
+  (** 最適化処理をくりかえす (caml2html: main_iter) *)
   Format.eprintf "iteration %d@." n;
   if n = 0 then e
   else
@@ -10,7 +10,7 @@ let rec iter n e =
     if e = e' then e else iter (n - 1) e'
 
 let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
-  (* バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
+  (** バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
   Id.counter := 0;
   Typing.extenv := M.empty;
   assert (String.ends_with filename ~suffix:".ml" = false);
@@ -25,7 +25,7 @@ let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
       |> RegAlloc.f |> Emit.f outchan
 
 let lexbuf_string outchan l : unit =
-  (* バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
+  (** バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
   Id.counter := 0;
   Typing.extenv := M.empty;
   Lexing.set_filename l "//toplevel//";
@@ -51,12 +51,10 @@ let onKNormalized f (tree : KNormal.t) =
     Format.fprintf ff "@[%a@]@." KNormal.pp tree;
     close_out oc
 
+(** 文字列をコンパイルして標準出力に表示する (caml2html: main_string) *)
 let string s = lexbuf_string stdout (Lexing.from_string s)
 
-(* 文字列をコンパイルして標準出力に表示する (caml2html: main_string) *)
-
-let file f =
-  (* ファイルをコンパイルしてファイルに出力する (caml2html: main_file) *)
+let file f = (** ファイルをコンパイルしてファイルに出力する (caml2html: main_file) *)
   let inchan = open_in (f ^ ".ml") in
   let outchan = open_out (f ^ ".s") in
   let buf = Lexing.from_channel inchan in
@@ -120,8 +118,7 @@ let file f =
       close_out outchan;
       raise e
 
-let () =
-  (* ここからコンパイラの実行が開始される (caml2html: main_entry) *)
+let () = (** ここからコンパイラの実行が開始される (caml2html: main_entry) *)
   let files = ref [] in
   Arg.parse
     [

@@ -3,8 +3,9 @@ open Asm
 let gethi x = Int64.bits_of_float x |> Int64.logand 0xffffffffL |> Int64.to_int32 (* external gethi : float -> int32 = "gethi" *)
 let getlo x = Int64.shift_right_logical (Int64.bits_of_float x) 32 |> Int64.to_int32 (* external getlo : float -> int32 = "getlo" *)
 
-let stackset = ref S.empty (* すでにSaveされた変数の集合 (caml2html: emit_stackset) *)
-let stackmap = ref [] (* Saveされた変数の、スタックにおける位置 (caml2html: emit_stackmap) *)
+let stackset = ref S.empty (** すでにSaveされた変数の集合 (caml2html: emit_stackset) *)
+
+let stackmap = ref [] (** Saveされた変数の、スタックにおける位置 (caml2html: emit_stackmap) *)
 let save x =
   stackset := S.add x !stackset;
   if not (List.mem x !stackmap) then
@@ -28,7 +29,7 @@ let pp_id_or_imm = function
   | V(x) -> x
   | C(i) -> "$" ^ string_of_int i
 
-(* 関数呼び出しのために引数を並べ替える(register shuffling) (caml2html: emit_shuffle) *)
+(** 関数呼び出しのために引数を並べ替える(register shuffling) (caml2html: emit_shuffle) *)
 let rec shuffle sw xys =
   (* remove identical moves *)
   let _, xys = List.partition (fun (x, y) -> x = y) xys in
@@ -43,14 +44,18 @@ let rec shuffle sw xys =
                                          xys)
   | xys, acyc -> acyc @ shuffle sw xys
 
-type dest = Tail | NonTail of Id.t (* 末尾かどうかを表すデータ型 (caml2html: emit_dest) *)
-let rec g oc = function (* 命令列のアセンブリ生成 (caml2html: emit_g) *)
+type dest = Tail | NonTail of Id.t (** 末尾かどうかを表すデータ型 (caml2html: emit_dest) *)
+let rec g oc = function (** 命令列のアセンブリ生成 (caml2html: emit_g) *)
   | dest, Ans(exp) -> g' oc (dest, exp)
   | dest, Let((x, t), exp, e) ->
       g' oc (NonTail(x), exp);
       g oc (dest, e)
-and g' oc = function (* 各命令のアセンブリ生成 (caml2html: emit_gprime) *)
-  (* 末尾でなかったら計算結果をdestにセット (caml2html: emit_nontail) *)
+
+(** 各命令のアセンブリ生成 (caml2html: emit_gprime)
+
+    末尾でなかったら計算結果をdestにセット (caml2html: emit_nontail) *)
+and g' oc = function 
+
   | NonTail(_), Nop -> ()
   | NonTail(x), Set(i) -> Printf.fprintf oc "\tmovl\t$%d, %s\n" i x
   | NonTail(x), SetL(Id.L(y)) -> Printf.fprintf oc "\tmovl\t$%s, %s\n" y x

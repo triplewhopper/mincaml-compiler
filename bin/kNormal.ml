@@ -1,6 +1,6 @@
-(* give names to intermediate values (K-normalization) *)
+(** give names to intermediate values (K-normalization) *)
 
-type t = (* K正規化後の式 (caml2html: knormal_t) *)
+type t = (** K正規化後の式 (caml2html: knormal_t) *)
   | Unit
   | Int of int
   | Float of float
@@ -26,7 +26,7 @@ type t = (* K正規化後の式 (caml2html: knormal_t) *)
   | ExtFunApp of Id.t * Id.t list [@@deriving show]
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
 
-let rec fv = function (* 式に出現する（自由な）変数 (caml2html: knormal_fv) *)
+let rec fv = function (** 式に出現する（自由な）変数 (caml2html: knormal_fv) *)
   | Unit | Int(_) | Float(_) | ExtArray(_) -> S.empty
   | Neg(x) | FNeg(x) -> S.singleton x
   | Add(x, y) | Sub(x, y) | FAdd(x, y) | FSub(x, y) | FMul(x, y) | FDiv(x, y) | Get(x, y) -> S.of_list [x; y]
@@ -41,7 +41,7 @@ let rec fv = function (* 式に出現する（自由な）変数 (caml2html: kno
   | Put(x, y, z) -> S.of_list [x; y; z]
   | LetTuple(xs, y, e) -> S.add y (S.diff (fv e) (S.of_list (List.map fst xs)))
 
-let insert_let (e, t) k = (* letを挿入する補助関数 (caml2html: knormal_insert) *)
+let insert_let (e, t) k = (** letを挿入する補助関数 (caml2html: knormal_insert) *)
   match e with
   | Var(x) -> k x
   | _ ->
@@ -49,9 +49,9 @@ let insert_let (e, t) k = (* letを挿入する補助関数 (caml2html: knormal_
       let e', t' = k x in
       Let((x, t), e, e'), t'
 
-let rec g env (ast: Syntax.ast) = 
+let rec g env (ast: Syntax.ast) = (** K正規化ルーチン本体 (caml2html: knormal_g) *)
   let makePrevAst ?(prev=ast) x = Syntax.makeAstWithPrev ~prev x in
-  match ast.value with (* K正規化ルーチン本体 (caml2html: knormal_g) *)
+  match ast.value with 
   | Syntax.Unit -> Unit, Type.Unit
   | Syntax.Bool(b) -> Int(if b then 1 else 0), Type.Int (* 論理値true, falseを整数1, 0に変換 (caml2html: knormal_bool) *)
   | Syntax.Int(i) -> Int(i), Type.Int

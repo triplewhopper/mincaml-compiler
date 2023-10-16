@@ -1,10 +1,10 @@
-(* customized version of Map *)
+(** customized version of Map *)
 
 module M =
   Map.Make
     (struct
       type t = Id.t
-      let compare = compare
+      let compare: t -> t -> int = compare
     end)
 include M
 

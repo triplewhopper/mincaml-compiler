@@ -1,5 +1,5 @@
 type closure = { entry : Id.l; actual_fv : Id.t list }
-type t = (* クロージャ変換後の式 (caml2html: closure_t) *)
+type t = (** クロージャ変換後の式 (caml2html: closure_t) *)
   | Unit
   | Int of int
   | Float of float
@@ -44,7 +44,7 @@ let rec fv = function
 
 let toplevel : fundef list ref = ref []
 
-let rec g env known = function (* クロージャ変換ルーチン本体 (caml2html: closure_g) *)
+let rec g env known = function (** クロージャ変換ルーチン本体 (caml2html: closure_g) *)
   | KNormal.Unit -> Unit
   | KNormal.Int(i) -> Int(i)
   | KNormal.Float(d) -> Float(d)

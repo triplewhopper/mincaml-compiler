@@ -1,8 +1,8 @@
-(* translation into assembly with infinite number of virtual registers *)
+(** translation into assembly with infinite number of virtual registers *)
 
 open Asm
 
-let data = ref [] (* 浮動小数点数の定数テーブル (caml2html: virtual_data) *)
+let data = ref [] (** 浮動小数点数の定数テーブル (caml2html: virtual_data) *)
 
 let classify xts ini addf addi =
   List.fold_left
@@ -31,7 +31,7 @@ let expand xts ini addf addi =
     (fun (offset, acc) x t ->
       (offset + 4, addi x t offset acc))
 
-let rec g env = function (* 式の仮想マシンコード生成 (caml2html: virtual_g) *)
+let rec g env = function (** 式の仮想マシンコード生成 (caml2html: virtual_g) *)
   | Closure.Unit -> Ans(Nop)
   | Closure.Int(i) -> Ans(Set(i))
   | Closure.Float(d) ->
@@ -132,7 +132,7 @@ let rec g env = function (* 式の仮想マシンコード生成 (caml2html: vir
       | _ -> assert false)
   | Closure.ExtArray(Id.L(x)) -> Ans(SetL(Id.L("min_caml_" ^ x)))
 
-(* 関数の仮想マシンコード生成 (caml2html: virtual_h) *)
+(** 関数の仮想マシンコード生成 (caml2html: virtual_h) *)
 let h { Closure.name = (Id.L(x), t); Closure.args = yts; Closure.formal_fv = zts; Closure.body = e } =
   let (int, float) = separate yts in
   let (offset, load) =
@@ -146,7 +146,7 @@ let h { Closure.name = (Id.L(x), t); Closure.args = yts; Closure.formal_fv = zts
       { name = Id.L(x); args = int; fargs = float; body = load; ret = t2 }
   | _ -> assert false
 
-(* プログラム全体の仮想マシンコード生成 (caml2html: virtual_f) *)
+(** プログラム全体の仮想マシンコード生成 (caml2html: virtual_f) *)
 let f (Closure.Prog(fundefs, e)) =
   data := [];
   let fundefs = List.map h fundefs in

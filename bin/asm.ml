@@ -1,10 +1,10 @@
-(* 2オペランドではなく3オペランドのx86アセンブリもどき *)
+(** 2オペランドではなく3オペランドのx86アセンブリもどき *)
 
 type id_or_imm = V of Id.t | C of int
-type t = (* 命令の列 (caml2html: sparcasm_t) *)
+type t = (** 命令の列 (caml2html: sparcasm_t) *)
   | Ans of exp
   | Let of (Id.t * Type.t) * exp * t
-and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *)
+and exp = (** 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *)
   | Nop
   | Set of int
   | SetL of Id.l
@@ -35,7 +35,8 @@ and exp = (* 一つ一つの命令に対応する式 (caml2html: sparcasm_exp) *
   | Save of Id.t * Id.t (* レジスタ変数の値をスタック変数へ保存 (caml2html: sparcasm_save) *)
   | Restore of Id.t (* スタック変数から値を復元 (caml2html: sparcasm_restore) *)
 type fundef = { name : Id.l; args : Id.t list; fargs : Id.t list; body : t; ret : Type.t }
-(* プログラム全体 = 浮動小数点数テーブル + トップレベル関数 + メインの式 (caml2html: sparcasm_prog) *)
+(** プログラム全体 = 浮動小数点数テーブル + トップレベル関数 + メインの式 (caml2html: sparcasm_prog) *)
+
 type prog = Prog of (Id.l * float) list * fundef list * t
 
 let fletd(x, e1, e2) = Let((x, Type.Float), e1, e2)
@@ -51,18 +52,19 @@ let reg_cl = regs.(Array.length regs - 1) (* closure address (caml2html: sparcas
 let reg_sw = regs.(Array.length regs - 1) (* temporary for swap *)
 let reg_fsw = fregs.(Array.length fregs - 1) (* temporary for swap *)
 *)
-let reg_sp = "%ebp" (* stack pointer *)
-let reg_hp = "min_caml_hp" (* heap pointer (caml2html: sparcasm_reghp) *)
+let reg_sp = "%ebp" (** stack pointer *)
+
+let reg_hp = "min_caml_hp" (** heap pointer (caml2html: sparcasm_reghp) *)
 (* let reg_ra = "%eax" (* return address *) *)
 let is_reg x = (x.[0] = '%' || x = reg_hp)
 
-(* super-tenuki *)
+(** super-tenuki *)
 let rec remove_and_uniq xs = function
   | [] -> []
   | x :: ys when S.mem x xs -> remove_and_uniq xs ys
   | x :: ys -> x :: remove_and_uniq (S.add x xs) ys
 
-(* free variables in the order of use (for spilling) (caml2html: sparcasm_fv) *)
+(** free variables in the order of use (for spilling) (caml2html: sparcasm_fv) *)
 let fv_id_or_imm = function V(x) -> [x] | _ -> []
 let rec fv_exp = function
   | Nop | Set(_) | SetL(_) | Comment(_) | Restore(_) -> []

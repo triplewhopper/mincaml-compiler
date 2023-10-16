@@ -1,8 +1,8 @@
 open KNormal
 
-let find x env = try M.find x env with Not_found -> x (* 置換のための関数 (caml2html: beta_find) *)
+let find x env = try M.find x env with Not_found -> x (** 置換のための関数 (caml2html: beta_find) *)
 
-let rec g env = function (* β簡約ルーチン本体 (caml2html: beta_g) *)
+let rec g env = function (** β簡約ルーチン本体 (caml2html: beta_g) *)
   | Unit -> Unit
   | Int(i) -> Int(i)
   | Float(d) -> Float(d)

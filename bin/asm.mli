@@ -35,8 +35,9 @@ and exp =
 type fundef = { name : Id.l; args : Id.t list; fargs : Id.t list; body : t; ret : Type.t }
 type prog = Prog of (Id.l * float) list * fundef list * t
 
-val fletd : Id.t * exp * t -> t (* shorthand of Let for float *)
-val seq : exp * t -> t (* shorthand of Let for unit *)
+val fletd : Id.t * exp * t -> t (** shorthand of [Let] for [float] *)
+
+val seq : exp * t -> t (** shorthand of [Let] for [unit] *)
 
 val regs : Id.t array
 val fregs : Id.t array

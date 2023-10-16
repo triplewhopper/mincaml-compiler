@@ -1,4 +1,4 @@
-(* customized version of Set *)
+(** customized version of Set *)
 
 module S =
   Set.Make

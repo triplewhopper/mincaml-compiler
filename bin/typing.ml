@@ -1,4 +1,4 @@
-(* type inference/reconstruction *)
+(** type inference/reconstruction *)
 
 open Syntax
 type error_kind = Known of {ast:ast;got:Type.t;expected:Type.t}| Unknown of ast [@@deriving show]
@@ -7,7 +7,7 @@ exception Error of error_kind
 
 let extenv = ref M.empty
 
-(* for pretty printing (and type normalization) *)
+(** for pretty printing (and type normalization) *)
 let rec deref_typ = function (* 型変数を中身でおきかえる関数 (caml2html: typing_deref) *)
   | Type.Fun(t1s, t2) -> Type.Fun(List.map deref_typ t1s, deref_typ t2)
   | Type.Tuple(ts) -> Type.Tuple(List.map deref_typ ts)
@@ -50,7 +50,7 @@ let rec deref_term ast: ast = let v = match ast.value with
   | e -> e
   in { ast with value = v}
 
-let rec occur r1 = function (* occur check (caml2html: typing_occur) *)
+let rec occur r1 = function (** occur check (caml2html: typing_occur) *)
   | Type.Fun(t2s, t2) -> List.exists (occur r1) t2s || occur r1 t2
   | Type.Tuple(t2s) -> List.exists (occur r1) t2s
   | Type.Array(t2) -> occur r1 t2
@@ -59,7 +59,7 @@ let rec occur r1 = function (* occur check (caml2html: typing_occur) *)
   | Type.Var({ contents = Some(t2) }) -> occur r1 t2
   | _ -> false
 
-let rec unify t1 t2 = (* 型が合うように、型変数への代入をする (caml2html: typing_unify) *)
+let rec unify t1 t2 = (** 型が合うように、型変数への代入をする (caml2html: typing_unify) *)
   match t1, t2 with
   | Type.Unit, Type.Unit | Type.Bool, Type.Bool | Type.Int, Type.Int | Type.Float, Type.Float -> ()
   | Type.Fun(t1s, t1'), Type.Fun(t2s, t2') ->
@@ -83,10 +83,10 @@ let rec unify t1 t2 = (* 型が合うように、型変数への代入をする 
 
 let raiseUnifyError ~ast ~got ~expected = raise (Error (Known {ast;got;expected}))
 
-(* if ~expected contains typevar, the behavior is undefined. *)
+(** if [~expected] is a typevar, the behavior is undefined. *)
 let try_unify e t ~expected = try unify t expected with Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:(deref_typ t) ~expected:(deref_typ expected)
 
-let rec g env e = (* 型推論ルーチン (caml2html: typing_g) *)
+let rec g env e = (** 型推論ルーチン (caml2html: typing_g) *)
   try
     match e.value with
     | Unit -> Type.Unit
