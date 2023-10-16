@@ -1,10 +1,8 @@
 type t = string [@@deriving show] (** 変数の名前 (caml2html: id_t) *)
 type l = L of string (** トップレベル関数やグローバル配列のラベル (caml2html: id_l) *)
 
-let rec pp_list = function
-  | [] -> ""
-  | [x] -> x
-  | x :: xs -> x ^ " " ^ pp_list xs
+let pp_t_list ~pp_sep ppf (ts: t list) = 
+  Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_text ppf pp_sep) pp ppf ts
 
 let counter = ref 0
 let genid s =

@@ -42,4 +42,4 @@ and ast = {
 let makeAst ~tokens value = assert (NList.is_empty tokens = false); { value; tokens; prev=None; father=None }
 let makeAstWithPrev ~prev value  = { value; tokens=NList.empty; prev=Some prev; father=None }
 let makeAstWithFather ~father value = { value; tokens=NList.empty; prev=None; father=Some father }
-let pp_print_list pp = (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ") pp)
+let pp_t_list ppf lst = (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_text ppf ", ") pp ppf lst)

@@ -75,8 +75,8 @@ let rec g env known = function (** クロージャ変換ルーチン本体 (caml
       let known', e1' =
         if S.is_empty zs then known', e1' else
         (* 駄目だったら状態(toplevelの値)を戻して、クロージャ変換をやり直す *)
-        (Format.eprintf "free variable(s) %s found in function %s@." (Id.pp_list (S.elements zs)) x;
-         Format.eprintf "function %s cannot be directly applied in fact@." x;
+        (Format.eprintf "free variable(s)@ @[<h 0>%a@]@ found in function@ @[%s@]@." (Id.pp_t_list ~pp_sep:", ") (S.elements zs) x;
+         Format.eprintf "function@ @[%s@]@ cannot be directly applied in fact@." x;
          toplevel := toplevel_backup;
          let e1' = g (M.add_list yts env') known e1 in
          known, e1') in
