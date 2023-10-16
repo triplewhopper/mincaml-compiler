@@ -57,7 +57,7 @@ let binary seq1 ~loc ~text seq2 = NList.Nested [seq1; singleton loc text; seq2]
 %left DOT
 
 /* (* 開始記号の定義 *) */
-%type <Syntax.ast> toplevel
+%type <Syntax.ast option> toplevel
 %type <Syntax.ast> exp
 %type <Syntax.ast> simple_exp
 %type <Syntax.fundef * Token.t NList.t> fundef
@@ -66,8 +66,10 @@ let binary seq1 ~loc ~text seq2 = NList.Nested [seq1; singleton loc text; seq2]
 %%
 
 toplevel: 
+| EOF
+    { None }
 | exp EOF
-    { $1 }
+    { Some($1) }
 ;
 
 simple_exp: /* (* 括弧をつけなくても関数の引数になれる式 (caml2html: parser_simple) *) */

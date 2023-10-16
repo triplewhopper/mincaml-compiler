@@ -1,5 +1,6 @@
 let limit = ref 1000
 let _ = Printexc.record_backtrace true
+
 let rec iter n e =
   (* 最適化処理をくりかえす (caml2html: main_iter) *)
   Format.eprintf "iteration %d@." n;
@@ -8,20 +9,31 @@ let rec iter n e =
     let e' = Elim.f (ConstFold.f (Inline.f (Assoc.f (Beta.f e)))) in
     if e = e' then e else iter (n - 1) e'
 
-let lexbuf outchan l onParsed onKNormalized =
+let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
   (* バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
   Id.counter := 0;
   Typing.extenv := M.empty;
-  Parser.toplevel Lexer.token l
-  |> (fun parsetree ->
-       onParsed parsetree;
-       parsetree)
-  |> Typing.f |> KNormal.f
-  |> (fun knormal ->
-       onKNormalized knormal;
-       knormal)
-  |> Alpha.f |> iter !limit |> Closure.f |> Virtual.f |> Simm.f |> RegAlloc.f
-  |> Emit.f outchan
+  assert (String.ends_with filename ~suffix:".ml" = false);
+  Lexing.set_filename l (filename ^ ".ml");
+  match Parser.toplevel Lexer.token l with
+  | None -> ()
+  | Some parsetree ->
+      onParsed filename parsetree;
+      let knormal = parsetree |> Typing.f |> KNormal.f in
+      onKNormalized filename knormal;
+      knormal |> Alpha.f |> iter !limit |> Closure.f |> Virtual.f |> Simm.f
+      |> RegAlloc.f |> Emit.f outchan
+
+let lexbuf_string outchan l : unit =
+  (* バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
+  Id.counter := 0;
+  Typing.extenv := M.empty;
+  Lexing.set_filename l "//toplevel//";
+  match Parser.toplevel Lexer.token l with
+  | None -> ()
+  | Some parsetree ->
+      parsetree |> Typing.f |> KNormal.f |> Alpha.f |> iter !limit |> Closure.f
+      |> Virtual.f |> Simm.f |> RegAlloc.f |> Emit.f outchan
 
 let onParsed f (tree : Syntax.ast) =
   if f = "" then ()
@@ -39,8 +51,8 @@ let onKNormalized f (tree : KNormal.t) =
     Format.fprintf ff "@[%a@]@." KNormal.pp tree;
     close_out oc
 
-let string s =
-  lexbuf stdout (Lexing.from_string s) (onParsed "") (onKNormalized "")
+let string s = lexbuf_string stdout (Lexing.from_string s)
+
 (* 文字列をコンパイルして標準出力に表示する (caml2html: main_string) *)
 
 let file f =
@@ -49,8 +61,7 @@ let file f =
   let outchan = open_out (f ^ ".s") in
   let buf = Lexing.from_channel inchan in
   try
-    Lexing.set_filename buf (f ^ ".ml");
-    lexbuf outchan buf (onParsed f) (onKNormalized f);
+    lexbuf outchan buf ~onParsed ~onKNormalized ~filename:f;
     close_in inchan;
     close_out outchan
   with
@@ -66,26 +77,37 @@ let file f =
         (pos1.pos_cnum - pos1.pos_bol + 1);
       Format.eprintf "@[Syntax error@]@.";
       exit 1
-  | Typing.Error (Typing.Known {ast; got;expected})-> 
+  | Typing.Error (Typing.Known { ast; got; expected }) ->
       close_in inchan;
       close_out outchan;
       Format.eprintf "ast:@ %a@." Syntax.pp_ast ast;
-      let front = NList.front ast.tokens |> Option.get and back = NList.back ast.tokens |> Option.get in
-      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f (
-        if front.start.pos_lnum = back.stop.pos_lnum then Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
-        else Format.sprintf "@[lines@ %d-%d@]" front.start.pos_lnum back.stop.pos_lnum
-      ) (front.start.pos_cnum - front.start.pos_bol + 1) (back.stop.pos_cnum - back.stop.pos_bol + 1);
+      let front = NList.front ast.tokens |> Option.get
+      and back = NList.back ast.tokens |> Option.get in
+      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f
+        (if front.start.pos_lnum = back.stop.pos_lnum then
+           Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
+         else
+           Format.sprintf "@[lines@ %d-%d@]" front.start.pos_lnum
+             back.stop.pos_lnum)
+        (front.start.pos_cnum - front.start.pos_bol + 1)
+        (back.stop.pos_cnum - back.stop.pos_bol + 1);
       Format.eprintf "@[%a@]@." Syntax.pp_ast ast;
-      Format.eprintf "@[TypeError: expected %a, but got %a@]@." Type.pp expected Type.pp got;
+      Format.eprintf "@[TypeError: expected %a, but got %a@]@." Type.pp expected
+        Type.pp got;
       exit 1
-  | Typing.Error (Unknown ast) as e->
+  | Typing.Error (Unknown ast) as e ->
       close_in inchan;
       close_out outchan;
-      let front = NList.front ast.tokens |> Option.get and back = NList.back ast.tokens |> Option.get in
-      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f (
-        if front.start.pos_lnum = back.stop.pos_lnum then Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
-        else Format.sprintf "@[lines@ %d-%d@]" front.start.pos_lnum back.stop.pos_lnum
-      ) (front.start.pos_cnum - front.start.pos_bol + 1) (back.stop.pos_cnum - back.stop.pos_bol + 1);
+      let front = NList.front ast.tokens |> Option.get
+      and back = NList.back ast.tokens |> Option.get in
+      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f
+        (if front.start.pos_lnum = back.stop.pos_lnum then
+           Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
+         else
+           Format.sprintf "@[lines@ %d-%d@]" front.start.pos_lnum
+             back.stop.pos_lnum)
+        (front.start.pos_cnum - front.start.pos_bol + 1)
+        (back.stop.pos_cnum - back.stop.pos_bol + 1);
       Format.eprintf "@[%a@]@." Syntax.pp_ast ast;
       Format.eprintf "@[TypeError: unknown type@]@.";
       exit 1
@@ -97,7 +119,6 @@ let file f =
       close_in inchan;
       close_out outchan;
       raise e
-
 
 let () =
   (* ここからコンパイラの実行が開始される (caml2html: main_entry) *)
