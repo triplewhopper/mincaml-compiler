@@ -111,14 +111,14 @@ let rec g env e = (** 型推論ルーチン (caml2html: typing_g) *)
         try_unify e2 (g env e2) ~expected:Type.Float;
         Type.Float
     | Eq(e1, e2) | Neq(e1, e2) | LE(e1, e2) | LT(e1, e2) | GE(e1, e2) | GT(e1, e2) ->
-        (* (try unify (g env e1) (g env e2) with Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:(g env e1) ~expected:(g env e2)); *)
-        (try 
+        (try unify (g env e1) (g env e2) with Unify _ -> raiseUnifyError ~ast:(deref_term e) ~got:(g env e1) ~expected:(g env e2));
+        (* (try 
             try_unify e1 (g env e1) ~expected:Type.Int;
             try_unify e2 (g env e2) ~expected:Type.Int;
         with Error _  -> (
             try_unify e1 (g env e1) ~expected:Type.Float;
             try_unify e2 (g env e2) ~expected:Type.Float;
-        ));
+        )); *)
         Type.Bool
     | If(e1, e2, e3) ->
         try_unify e1 (g env e1) ~expected:Type.Bool;

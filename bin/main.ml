@@ -109,10 +109,6 @@ let file f = (** ファイルをコンパイルしてファイルに出力する
       Format.eprintf "@[%a@]@." Syntax.pp_ast ast;
       Format.eprintf "@[TypeError: unknown type@]@.";
       exit 1
-  | Failure e ->
-      close_in inchan;
-      close_out outchan;
-      failwith e
   | e ->
       close_in inchan;
       close_out outchan;
