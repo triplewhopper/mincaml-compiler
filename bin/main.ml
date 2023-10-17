@@ -81,7 +81,7 @@ let file f = (** ファイルをコンパイルしてファイルに出力する
       Format.eprintf "ast:@ %a@." Syntax.pp_ast ast;
       let front = NList.front ast.tokens |> Option.get
       and back = NList.back ast.tokens |> Option.get in
-      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f
+      Format.eprintf "@[File \"%s.ml\",@ %s,@ characters@ %d-%d@]@." f
         (if front.start.pos_lnum = back.stop.pos_lnum then
            Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
          else
@@ -98,7 +98,7 @@ let file f = (** ファイルをコンパイルしてファイルに出力する
       close_out outchan;
       let front = NList.front ast.tokens |> Option.get
       and back = NList.back ast.tokens |> Option.get in
-      Format.eprintf "@[File \"%s\",@ %s,@ characters@ %d-%d@]@." f
+      Format.eprintf "@[File \"%s.ml\",@ %s,@ characters@ %d-%d@]@." f
         (if front.start.pos_lnum = back.stop.pos_lnum then
            Format.sprintf "@[lines@ %d@]" front.start.pos_lnum
          else
