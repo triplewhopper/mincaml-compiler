@@ -4,7 +4,7 @@ module M =
   Map.Make
     (struct
       type t = Id.t
-      let compare: t -> t -> int = compare
+      let compare: t -> t -> int = Id.compare
     end)
 include M
 

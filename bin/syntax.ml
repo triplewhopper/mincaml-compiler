@@ -31,8 +31,8 @@ type t = (** MinCamlの構文を表現するデータ型 (caml2html: syntax_t) *
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : ast } [@@deriving show]
 and ast = {
   value: t;
-  tokens: Token.t NList.t [@printer fun fmt tokens -> if NList.is_empty tokens = false then Format.fprintf fmt "%a" (NList.pp Token.pp) tokens];
-  prev: ast option [@printer fun fmt prev -> if Option.is_some prev then Format.fprintf fmt "%a" pp_ast (Option.get prev)];
+  tokens: Token.t NList.t [@printer fun fmt tokens -> if NList.is_empty tokens = false then Format.fprintf fmt "<tokens>" (*(NList.pp Token.pp_text) tokens*)];
+  prev: ast option [@printer fun fmt prev -> if Option.is_some prev then Format.fprintf fmt "<prev>" (*pp_ast (Option.get prev)*)];
   father: ast option [@printer fun fmt father -> if Option.is_some father then Format.fprintf fmt "<father>"];
 } [@@deriving show]
 

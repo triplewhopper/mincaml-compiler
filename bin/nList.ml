@@ -50,3 +50,27 @@ let rec back = function
   | Nested (Nested x :: xs) -> (
       match back (Nested xs) with None -> back (Nested x) | Some x -> Some x)
   | Singleton x -> Some x
+
+let flatten lst = 
+  let rec flatten' acc = function
+    | [] -> List.rev acc
+    | Nested (Singleton x :: xs) :: ys -> flatten' (x :: acc) (Nested xs :: ys)
+    | Nested (Nested x :: xs) :: ys -> flatten' acc (Nested x :: Nested xs :: ys)
+    | Singleton x :: ys -> flatten' (x :: acc) ys
+    | Nested [] :: ys -> flatten' acc ys
+  in
+  flatten' [] [lst]
+
+let rec find_opt p = function
+  | Nested [] -> None
+  | Nested (Singleton x :: xs) -> if p x then Some x else find_opt p (Nested xs)
+  | Nested (Nested x :: xs) -> (
+      match find_opt p (Nested x) with None -> find_opt p (Nested xs) | Some x -> Some x)
+  | Singleton x -> if p x then Some x else None
+
+let equal eq (l1: 'a t) (l2: 'a t) = 
+  let f1 = flatten l1 and f2 = flatten l2 in 
+  List.compare_lengths f1 f2 = 0 && List.equal eq f1 f2
+
+let concat l1 l2 = 
+  if is_empty l1 then l2 else if is_empty l2 then l1 else Nested [l1; l2]

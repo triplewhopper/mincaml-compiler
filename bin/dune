@@ -1,8 +1,9 @@
 (executable
- (preprocess (pps ppx_deriving.show))
+ (preprocess (pps ppx_deriving.show ppx_deriving.eq))
  (public_name minimized)
  (name main)
- (flags (:standard -warn-error -a))
+ (flags (:standard -g -warn-error -a))
+ (modes native)
  )
  
 

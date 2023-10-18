@@ -4,21 +4,24 @@ type position = Lexing.position = {
   pos_bol : int;
   pos_cnum : int;
 }
-[@@deriving show]
+[@@deriving show, eq]
 
-type t = { start : position; stop : position; text : string }
+type t = { start : position; stop : position; text : string } [@@deriving show, eq]
 
 let make (start, stop) text = { start; stop; text }
 
 let pp fmt { start; stop; text } =
   if start.pos_fname = stop.pos_fname then
-    Format.fprintf fmt "@[<h 0>\"%s\"%@%s:%d:%d-%d@]" (String.escaped text)
+    Format.fprintf fmt "@[<h>%s:%d:%d-%d:\"%s\"@]" 
       start.pos_fname start.pos_lnum
       (start.pos_cnum - start.pos_bol)
-      (stop.pos_cnum - stop.pos_bol)
+      (stop.pos_cnum - stop.pos_bol)(String.escaped text)
   else
-    Format.fprintf fmt "@[<h 0>\"%s\"%@%s:%d:%d-%d:%d@]" (String.escaped text)
+    Format.fprintf fmt "@[<h>%s:%d:%d-%d:%d:\"%s\"@]" 
       start.pos_fname start.pos_lnum
       (start.pos_cnum - start.pos_bol)
       stop.pos_lnum
-      (stop.pos_cnum - stop.pos_bol)
+      (stop.pos_cnum - stop.pos_bol)(String.escaped text)
+
+let pp_text fmt { text; _ } = Format.fprintf fmt "%s" text
+let isUnderscore { text; _ } = text = "_"

@@ -26,7 +26,7 @@ rule token = parse
 
 | "="          { add EQ }
 | "<>"         { add NEQ }
-| "_"          { add (ID ("__" ^ Id.gentmp Type.Unit)) }
+| "_"          { add (ID ("_")) }
 
 | "<"          { add LT }
 | "<="         { add LE }

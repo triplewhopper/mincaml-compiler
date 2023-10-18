@@ -1,7 +1,7 @@
 %{
 (* parserが利用する変数、関数、型などの定義 *)
 open Syntax
-let addtyp x = (x, Type.gentyp ())
+let addtyp loc x = (Id.make (Token.make loc x), Type.gentyp ())
 let singleton loc text = NList.Singleton (Token.make loc text)
 let prefix ~loc ~text seq = NList.Nested [singleton loc text; seq]
 let suffix ~loc ~text seq = NList.Nested [seq; singleton loc text]
@@ -28,7 +28,7 @@ let binary seq1 ~loc ~text seq2 = NList.Nested [seq1; singleton loc text; seq2]
 %token IF "if"
 %token THEN "then"
 %token ELSE "else"
-%token <Id.t> ID
+%token <string> ID
 %token LET "let"
 %token IN "in"
 %token REC "rec"
@@ -84,7 +84,7 @@ simple_exp: /* (* 括弧をつけなくても関数の引数になれる式 (cam
 | FLOAT
     { makeAst (Float(float_of_string $1)) ~tokens:(singleton $loc($1) $1) }
 | ID
-    { makeAst (Var($1)) ~tokens:(singleton $loc($1) $1) }
+    { makeAst (Var(Id.make (Token.make $loc($1) $1))) ~tokens:(singleton $loc($1) $1) }
 | simple_exp DOT LPAR exp RPAR { 
     let tokens = NList.Nested [
         $1.tokens;
@@ -146,7 +146,7 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
     { makeAst (FDiv($1, $3)) ~tokens:(binary $1.tokens ~loc:$loc($2) ~text:"/." $3.tokens) }
 | LET ID EQ exp IN exp
     %prec prec_let
-    { makeAst (Let(addtyp $2, $4, $6)) ~tokens:(NList.Nested [
+    { makeAst (Let(addtyp $loc($2) $2, $4, $6)) ~tokens:(NList.Nested [
         singleton $loc($1) "let";
         singleton $loc($2) $2;
         singleton $loc($3) "=";
@@ -194,7 +194,7 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
         $7.tokens
     ]) }
 | exp SEMI exp
-    { makeAst (Let((Id.gentmp Type.Unit, Type.Unit), $1, $3)) ~tokens:(NList.Nested [
+    { makeAst (Let((Id.gentmp Type.Unit __LOC__, Type.Unit), $1, $3)) ~tokens:(NList.Nested [
         $1.tokens;
         singleton $loc($2) ";";
         $3.tokens
@@ -217,7 +217,7 @@ exp: /* (* 一般の式 (caml2html: parser_exp) *) */
 
 fundef:
 | ID formal_args EQ exp
-    { let a, b = $2 in { name = addtyp $1; args = a; body = $4 }, NList.Nested [
+    { let a, b = $2 in { name = addtyp $loc($1) $1; args = a; body = $4 }, NList.Nested [
         singleton $loc($1) $1;
         NList.Nested b;
         singleton $loc($3) "=";
@@ -226,9 +226,9 @@ fundef:
 
 formal_args:
 | ID formal_args
-    { let a, b = $2 in (addtyp $1 :: a), (singleton $loc($1) $1 :: b) }
+    { let a, b = $2 in (addtyp $loc($1) $1 :: a), (singleton $loc($1) $1 :: b) }
 | ID
-    { [addtyp $1], [singleton $loc($1) $1] }
+    { [addtyp $loc($1) $1], [singleton $loc($1) $1] }
 
 actual_args:
 | actual_args simple_exp
@@ -245,7 +245,7 @@ elems:
     { [$1; $3], [$1.tokens; singleton $loc($2) ","; $3.tokens] }
 
 pat:
-| pat COMMA ID { let a, b = $1 in (a @ [addtyp $3]), (b @ [singleton $loc($2) ","; singleton $loc($3) $3]) }
+| pat COMMA ID { let a, b = $1 in (a @ [addtyp $loc($3) $3]), (b @ [singleton $loc($2) ","; singleton $loc($3) $3]) }
 
 | ID COMMA ID
-    { [addtyp $1; addtyp $3], [singleton $loc($1) $1; singleton $loc($2) ","; singleton $loc($3) $3] }
+    { [addtyp $loc($1) $1; addtyp $loc($3) $3], [singleton $loc($1) $1; singleton $loc($2) ","; singleton $loc($3) $3] }

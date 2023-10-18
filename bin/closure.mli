@@ -1,5 +1,9 @@
 type closure = { entry : Id.l; actual_fv : Id.t list }
-type t =
+type t = {
+  value: exp;
+  tokens: Token.t NList.t;
+  prev: (t, (KNormal.t, Syntax.ast) Either.t) Either.t
+} and exp =
   | Unit
   | Int of int
   | Float of float
@@ -26,8 +30,10 @@ type t =
 type fundef = { name : Id.l * Type.t;
                 args : (Id.t * Type.t) list;
                 formal_fv : (Id.t * Type.t) list;
-                body : t }
+                body : t;
+                link: KNormal.t }
 type prog = Prog of fundef list * t
 
 val fv : t -> S.t
 val f : KNormal.t -> prog
+val pp: Format.formatter -> t -> unit

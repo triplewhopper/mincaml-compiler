@@ -21,7 +21,7 @@ let rec deref_typ = function (* 型変数を中身でおきかえる関数 (caml
       r := Some(t');
       t'
   | t -> t
-let rec deref_id_typ (x, t) = (x, deref_typ t)
+let deref_id_typ (x, t) = (x, deref_typ t)
 let rec deref_term ast: ast = let v = match ast.value with 
   | Not(e) -> Not(deref_term e)
   | Neg(e) -> Neg(deref_term e)
@@ -132,7 +132,7 @@ let rec g env e = (** 型推論ルーチン (caml2html: typing_g) *)
     | Var(x) when M.mem x env -> M.find x env (* 変数の型推論 (caml2html: typing_var) *)
     | Var(x) when M.mem x !extenv -> M.find x !extenv
     | Var(x) -> (* 外部変数の型推論 (caml2html: typing_extvar) *)
-        Format.eprintf "free variable %s assumed as external@." x;
+        Format.eprintf "free variable %a assumed as external@." Id.pp x;
         let t = Type.gentyp () in
         extenv := M.add x t !extenv;
         t

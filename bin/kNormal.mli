@@ -1,4 +1,9 @@
-type t =
+type ('a, 'b) link = PrevLeft of 'a | PrevRight of 'b | Father of 'a Promise.t 
+type t = {
+  value: exp;
+  tokens: Token.t NList.t;
+  prev: (t, Syntax.ast) link; 
+} and exp = 
   | Unit
   | Int of int
   | Float of float
@@ -28,3 +33,6 @@ val fv : t -> S.t
 val f : Syntax.ast -> t
 
 val pp: Format.formatter -> t -> unit
+val equal: t -> t -> bool
+val equal_exp: exp -> exp -> bool
+val shallowEq: t -> t -> bool

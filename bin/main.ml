@@ -1,17 +1,17 @@
 let limit = ref 1000
 let _ = Printexc.record_backtrace true
 
-let rec iter n e =
+let rec iter n kn =
   (** 最適化処理をくりかえす (caml2html: main_iter) *)
   Format.eprintf "iteration %d@." n;
-  if n = 0 then e
+  if n = 0 then kn
   else
-    let e' = Elim.f (ConstFold.f (Inline.f (Assoc.f (Beta.f e)))) in
-    if e = e' then e else iter (n - 1) e'
+    let kn' = Elim.f (ConstFold.f (Inline.f (Assoc.f (Beta.f kn)))) in
+    if KNormal.shallowEq kn kn' then kn else iter (n - 1) kn'
 
 let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
   (** バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
-  Id.counter := 0;
+  Id.resetCounter ();
   Typing.extenv := M.empty;
   assert (String.ends_with filename ~suffix:".ml" = false);
   Lexing.set_filename l (filename ^ ".ml");
@@ -26,7 +26,7 @@ let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
 
 let lexbuf_string outchan l : unit =
   (** バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
-  Id.counter := 0;
+  Id.resetCounter ();
   Typing.extenv := M.empty;
   Lexing.set_filename l "//toplevel//";
   match Parser.toplevel Lexer.token l with
@@ -39,7 +39,7 @@ let onParsed f (tree : Syntax.ast) =
   if f = "" then ()
   else
     let oc = open_out (f ^ ".parsed") in
-    let ff = Format.formatter_of_out_channel oc in
+    let ff = Format.formatter_of_out_channel oc in Format.set_geometry ~max_indent:190 ~margin:200;
     Format.fprintf ff "@[%a@]@." Syntax.pp_ast tree;
     close_out oc
 
@@ -47,7 +47,7 @@ let onKNormalized f (tree : KNormal.t) =
   if f = "" then ()
   else
     let oc = open_out (f ^ ".knormalized") in
-    let ff = Format.formatter_of_out_channel oc in
+    let ff = Format.formatter_of_out_channel oc in Format.set_geometry ~max_indent:190 ~margin:200;
     Format.fprintf ff "@[%a@]@." KNormal.pp tree;
     close_out oc
 
