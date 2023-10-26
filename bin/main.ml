@@ -1,15 +1,26 @@
 let limit = ref 1000
 let _ = Printexc.record_backtrace true
 
-let rec iter n kn =
+let rec iter n filename kn =
   (** 最適化処理をくりかえす (caml2html: main_iter) *)
-  Format.eprintf "iteration %d@." n;
-  if n = 0 then kn
+  (* Format.eprintf "iteration %d@..." n; *)
+  if n = 0 then (Format.eprintf "iteration %d... nothing to do@." n;kn)
   else
-    let kn' = Elim.f (ConstFold.f (Inline.f (Assoc.f (Beta.f kn)))) in
-    if KNormal.shallowEq kn kn' then kn else iter (n - 1) kn'
+    let kn' = kn in 
 
-let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
+    let kn' = Assoc.f kn' in
+    Action.onANormalized filename kn';
+    Action.onBeforeCSE (filename ^ "-" ^ string_of_int n)  kn';
+    let kn' = Cse.f kn' in
+    let kn' = Beta.f kn' in
+    Action.onAfterCSE (filename ^ "-" ^ string_of_int n) kn';
+    (* let kn' = Inline.f kn' in
+    let kn' = ConstFold.f kn' in
+    let kn' = Elim.f kn' in *)
+    Format.eprintf "iteration %d... done@." n;
+    if KNormal.shallowEq kn kn' then kn else iter (n - 1) filename kn'
+
+let lexbuf ~filename outchan l : unit =
   (** バッファをコンパイルしてチャンネルへ出力する (caml2html: main_lexbuf) *)
   Id.resetCounter ();
   Typing.extenv := M.empty;
@@ -18,10 +29,12 @@ let lexbuf ~onParsed ~onKNormalized ~filename outchan l : unit =
   match Parser.toplevel Lexer.token l with
   | None -> ()
   | Some parsetree ->
-      onParsed filename parsetree;
+      Action.onParsed filename parsetree;
       let knormal = parsetree |> Typing.f |> KNormal.f in
-      onKNormalized filename knormal;
-      knormal |> Alpha.f |> iter !limit |> Closure.f |> Virtual.f |> Simm.f
+      Action.onKNormalized filename knormal;
+      let knormal = knormal |> Alpha.f in 
+      Action.onAlphaConverted filename knormal;
+      knormal |> iter !limit filename |> Closure.f |> Virtual.f |> Simm.f
       |> RegAlloc.f |> Emit.f outchan
 
 let lexbuf_string outchan l : unit =
@@ -32,24 +45,8 @@ let lexbuf_string outchan l : unit =
   match Parser.toplevel Lexer.token l with
   | None -> ()
   | Some parsetree ->
-      parsetree |> Typing.f |> KNormal.f |> Alpha.f |> iter !limit |> Closure.f
+      parsetree |> Typing.f |> KNormal.f |> Alpha.f |> iter !limit "<stdin>"|> Closure.f
       |> Virtual.f |> Simm.f |> RegAlloc.f |> Emit.f outchan
-
-let onParsed f (tree : Syntax.ast) =
-  if f = "" then ()
-  else
-    let oc = open_out (f ^ ".parsed") in
-    let ff = Format.formatter_of_out_channel oc in Format.set_geometry ~max_indent:190 ~margin:200;
-    Format.fprintf ff "@[%a@]@." Syntax.pp_ast tree;
-    close_out oc
-
-let onKNormalized f (tree : KNormal.t) =
-  if f = "" then ()
-  else
-    let oc = open_out (f ^ ".knormalized") in
-    let ff = Format.formatter_of_out_channel oc in Format.set_geometry ~max_indent:190 ~margin:200;
-    Format.fprintf ff "@[%a@]@." KNormal.pp tree;
-    close_out oc
 
 (** 文字列をコンパイルして標準出力に表示する (caml2html: main_string) *)
 let string s = lexbuf_string stdout (Lexing.from_string s)
@@ -59,7 +56,7 @@ let file f = (** ファイルをコンパイルしてファイルに出力する
   let outchan = open_out (f ^ ".s") in
   let buf = Lexing.from_channel inchan in
   try
-    lexbuf outchan buf ~onParsed ~onKNormalized ~filename:f;
+    lexbuf outchan buf ~filename:f;
     close_in inchan;
     close_out outchan
   with

@@ -2,6 +2,7 @@
 type ('a, 'b) link = PrevLeft of 'a | PrevRight of 'b | Father of 'a Promise.t
 type t = {(** K正規化後の式 (caml2html: knormal_t) *)
   value: exp;
+  (* ssn: int; *)
   tokens: Token.t NList.t[@equal (==)];
   prev: (t, Syntax.ast) link
   [@printer fun fmt -> function PrevLeft t -> pp fmt t | PrevRight t -> Syntax.pp_ast fmt t | Father _ -> ()]
@@ -29,8 +30,38 @@ type t = {(** K正規化後の式 (caml2html: knormal_t) *)
   | Get of Id.t * Id.t
   | Put of Id.t * Id.t * Id.t
   | ExtArray of Id.t
-  | ExtFunApp of Id.t * Id.t list [@@deriving show,eq]
+  | ExtFunApp of Id.t * Id.t list [@@deriving show, eq]
 and fundef = { name : Id.t * Type.t; args : (Id.t * Type.t) list; body : t }
+
+let rec pp_exp fmt = function
+  | Unit -> Format.fprintf fmt "()"
+  | Int(i) -> Format.fprintf fmt "%d" i
+  | Float(d) -> Format.fprintf fmt "%f" d
+  | Neg(x) -> Format.fprintf fmt "- %a" Id.pp x
+  | Add(x, y) -> Format.fprintf fmt "%a + %a" Id.pp x Id.pp y
+  | Sub(x, y) -> Format.fprintf fmt "%a - %a" Id.pp x Id.pp y
+  | FNeg(x) -> Format.fprintf fmt "-. %a" Id.pp x
+  | FAdd(x, y) -> Format.fprintf fmt "%a +. %a" Id.pp x Id.pp y
+  | FSub(x, y) -> Format.fprintf fmt "%a -. %a" Id.pp x Id.pp y
+  | FMul(x, y) -> Format.fprintf fmt "%a *. %a" Id.pp x Id.pp y
+  | FDiv(x, y) -> Format.fprintf fmt "%a /. %a" Id.pp x Id.pp y
+  | IfEq(x, y, e1, e2) -> Format.fprintf fmt "if %a = %a then@;<1 2>@[%a@]@ else@;<1 2>@[%a@]" Id.pp x Id.pp y pp_kn e1 pp_kn e2
+  | IfLE(x, y, e1, e2) -> Format.fprintf fmt "if %a <= %a then@;<1 2>@[%a@]@ else@;<1 2>@[%a@]" Id.pp x Id.pp y pp_kn e1 pp_kn e2
+  | Let((x, t), e1, ({value=Let _;_} as e2)) -> Format.fprintf fmt "let %a =@;<1 2>@[%a@] in@;<1 0>@[%a@]" Id.pp x pp_kn e1 pp_kn e2
+  | Let((x, t), e1, e2) -> Format.fprintf fmt "let %a =@;<1 2>@[%a@]@;<1 0>in@;<1 2>@[%a@]" Id.pp x pp_kn e1 pp_kn e2
+  | Var(x) -> Id.pp fmt x
+  | LetRec({ name = (x, t); args = yts; body = e1 }, e2) ->
+      let pp_args fmt args = Id.pp_t_list ~pp_sep:" " fmt args in
+      Format.fprintf fmt "let rec %a %a =@;<1 2>@[%a@]@ in@;<1 2>@[%a@]" Id.pp x pp_args (List.map fst yts) pp_kn e1 pp_kn e2
+  | App(x, ys) -> Format.fprintf fmt "@[<h>%a@ %a@]" Id.pp x (Id.pp_t_list ~pp_sep:" ") ys
+  | Tuple(xs) -> Format.fprintf fmt "(%a)" (Id.pp_t_list ~pp_sep:", ") xs
+  | LetTuple(xs, y, e) -> Format.fprintf fmt "let (%a) = %a in@;<1 2>@[%a@]" (Id.pp_t_list ~pp_sep:", ") (List.map fst xs) Id.pp y pp_kn e
+  | Get(x, y) -> Format.fprintf fmt "%a.(%a)" Id.pp x Id.pp y
+  | Put(x, y, z) -> Format.fprintf fmt "%a.(%a) <- %a" Id.pp x Id.pp y Id.pp z
+  | ExtArray(x) -> Format.fprintf fmt "%a" Id.pp x
+  | ExtFunApp(x, ys) -> Format.fprintf fmt "@[<h>%a %a@]" Id.pp x (Id.pp_t_list ~pp_sep:" ") ys
+
+and pp_kn fmt kn = pp_exp fmt kn.value
 
 let shallowEq kn1 kn2 = equal_exp kn1.value kn2.value
 let rec fv kn = match kn.value with (** 式に出現する（自由な）変数 (caml2html: knormal_fv) *)

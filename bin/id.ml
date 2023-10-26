@@ -60,7 +60,7 @@ let id_of_typ = function
 
 let gentmp typ where : t =
   incr counter;
-  (Printf.sprintf "T%s%d" (id_of_typ typ) !counter, B where, dummy)
+  (Printf.sprintf "_T%s%d" (id_of_typ typ) !counter, B where, dummy)
 
 let make (token : Token.t) : t =
   if Token.isUnderscore token then (
