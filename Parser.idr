@@ -2,7 +2,7 @@ module Parser
 import M 
 import Ty
 import Lexer
-import Cyntax as Syntax
+import Syntax
 import Data.List
 import Data.List1
 import Data.Vect
@@ -41,8 +41,7 @@ newvar: M State TypeVar
 newvar = MkM (\s => (s.tyvar, {tyvar:=case s.tyvar of TyVar n => TyVar (n+1)} s))
 
 newvars: (n: Nat) -> M State (Vect n TypeVar)
-newvars Z = pure []
-newvars (S n) = pure (!newvar :: !(newvars n))
+newvars n = traverse id (replicate n newvar)
 
 0 RT: Type
 RT = M State Node

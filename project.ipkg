@@ -16,7 +16,7 @@ package project
 depends = contrib
 
 -- modules to install
-modules = KNormal, Cyntax, Ty, Main, Lexer, Parser
+modules = KNormal, Syntax, Ty, Main, Lexer, Parser
 
 -- main file (i.e. file to load at REPL)
 main = Main

@@ -12,7 +12,7 @@ import Decidable.Equality
 import Data.HVect
 import Ty
 import Id
-import Cyntax as Syntax
+import Syntax
 
 
 %default total

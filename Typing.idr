@@ -4,7 +4,7 @@ import Ty
 import Data.Vect
 import Data.List
 import Decidable.Equality
-import Cyntax as Syntax
+import Syntax
 import Control.App
 import Control.App.Console
 import Control.App.FileIO

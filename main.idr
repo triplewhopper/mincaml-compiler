@@ -7,7 +7,7 @@ import Data.SortedMap
 import Ty
 import Typing
 import System.File.Virtual
-import Cyntax as Syntax
+import Syntax
 
 hello: Console es => App es ()
 hello = do

@@ -1,4 +1,4 @@
-module Cyntax
+module Syntax
 
 import Data.Vect
 import Data.String
