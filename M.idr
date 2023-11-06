@@ -1,6 +1,8 @@
 module M
 
 import Data.Vect
+import Data.List
+import Data.List.Elem
 import Ty
 import Cyntax as Syntax
 

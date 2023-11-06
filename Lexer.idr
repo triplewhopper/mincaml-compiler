@@ -3,11 +3,6 @@ import Data.List
 import Data.List1
 import Text.Lexer
 import Data.String
-import Control.App
-import Control.App.Console
-import Control.App.FileIO
-import System.File
-import System.File.Virtual
 import Data.Vect
 
 %default total 
@@ -102,7 +97,9 @@ Show MinCamlTokenKind where
 
 export
 Show MinCamlToken where 
-    show (Tok kind text) = "<" ++ show kind ++ " " ++ show text ++ ">"
+    show (Tok kind text) = """
+    \{show text} as \{show kind}
+    """
 
 export
 TokenKind MinCamlTokenKind where 
@@ -162,14 +159,11 @@ identifier = ((is '_' <|> alpha) <+> some (is '\'' <|> is '_' <|> alphaNum)) <|>
 array_create: Lexer
 array_create = exact "Array" <+> many space <+> is '.' <+> many space <+> (exact "create" <|> exact "make")
 
-fractionalPart : Lexer
-fractionalPart = some (is '_' <|> digit)
+integralPart, fractionalPart, exponentialPart: Lexer
 
-exponentialPart : Lexer
-exponentialPart = approx "e" <+> opt (oneOf "+-") <+> digit <+> many (is '_' <|> digit)
-
-integralPart : Lexer
 integralPart = digit <+> many (is '_' <|> digit)
+fractionalPart = some (is '_' <|> digit)
+exponentialPart = approx "e" <+> opt (oneOf "+-") <+> digit <+> many (is '_' <|> digit)
 
 floatLit : Lexer
 floatLit = (
@@ -225,18 +219,21 @@ minCamlTokenMap = toTokenMap [(spaces, SPACES), (comment, COMMENT), (array_creat
     (exact "_", UNDERSOCRE)
   ]
 
-export
-lexMinCaml : String -> (List (WithBounds MinCamlToken), Int, Int, String)
-lexMinCaml str =
-  case lex minCamlTokenMap str of
-    (tokens, ln, cl, s) => (tokens, ln, cl, s)
-    -- _ => Nothing
+public export
+data LexError: Type where
+  LexErr: Int -> Int -> LexError
 
 export
-lexMinCamlFile: String -> App Init ()
-lexMinCamlFile path = assert_total handle (readFile path)
-  (\str => do 
-    let (tokens, ln, cl, rest) = lexMinCaml str
-    putStrLn $ joinBy "\n" (show <$> filter (not . ignored) tokens)
-    putStrLn (show ln ++ ":" ++ show cl ++ ":" ++ show rest))
-  (\err : IOError => putStrLn (show err))
+Show LexError where
+  show (LexErr ln cl) = "line \{show (ln + 1)}, character \{show (cl + 1)}"
+
+||| Lexes a string into a list of tokens.
+||| garantees that the last token is EOF.
+export
+lexMinCaml : String -> Either LexError (List1 (WithBounds MinCamlToken))
+lexMinCaml str =
+  case lex minCamlTokenMap str of
+    (tokens, ln, cl, "") => Right (reverse (MkBounded (Tok EOF "") False (MkBounds ln cl ln cl):::reverse tokens))
+    (tokens, ln, cl, rest) => Left (LexErr ln cl)
+
+
