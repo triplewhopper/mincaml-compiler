@@ -27,17 +27,27 @@ incr = MkM (\s => ((), {key$=(+1)} s))
 newunderscore: M State String
 newunderscore = MkM (\s => ("__underscore_" ++ show s.underscore, {underscore$=(+1)} s))
 
-get: M State Nat
-get = MkM (\s => (s.key, s))
+get: M State (Bounds -> WithBounds Nat)
+get = MkM (\s => ((\b => MkBounded s.key False b), s))
+
+span: WithBounds a -> WithBounds b -> Bounds
+span (MkBounded _ _ (MkBounds ln0 cl0 _ _)) (MkBounded _ _ (MkBounds _ _ ln1 cl1)) = MkBounds ln0 cl0 ln1 cl1
 
 -- newvar: M State TypeVar
 -- newvar = MkM (\s => (s.tyvar, {tyvar:=case s.tyvar of TyVar n => TyVar (n+1)} s))
 
 -- newvars: (n: Nat) -> M State (Vect n TypeVar)
 -- newvars n = traverse id (replicate n newvar)
+0 Key: Type
+Key = WithBounds Nat
+
+export 
+Info Key where 
+    (.key) x = NodeKey x.val
+    (.span) = WithBounds.(.bounds)
 
 0 RT: Type
-RT = M State Node
+RT = M State (WithBounds (Node Key))
 
 showEitherName: Either String () -> String
 showEitherName (Left s) = s
@@ -50,8 +60,8 @@ argM (Right ()) = newunderscore
 argsM : Traversable t => t (Either String ()) -> M State (t String) 
 argsM args = traverse argM args
 
-binaryM: (Node -> Node -> Node) -> RT -> RT -> RT
-binaryM k e1 e2 = do e1 <- e1; incr; e2 <- e2; incr; pure $ k e1 e2
+binaryM: ((key: WithBounds Nat) -> Node Key -> Node Key -> Node Key) -> RT -> RT -> RT
+binaryM k e1 e2 = do e1 <- e1; incr; e2 <- e2; incr; pure $ MkBounded (k (!get (span e1 e2)) e1.val e2.val) False (span e1 e2)
   
 fMulM, fDivM, fAddM, fSubM, addM, subM: RT -> RT -> RT
 
@@ -59,31 +69,34 @@ eqM, neqM, ltM, leM, gtM, geM : RT -> RT -> RT
 
 semiM: RT -> RT -> RT
 
-fMulM e1 e2 = binaryM (FMul {key=(!get)}) e1 e2
-fDivM e1 e2 = binaryM (FDiv {key=(!get)}) e1 e2
-fAddM e1 e2 = binaryM (FAdd {key=(!get)}) e1 e2
-fSubM e1 e2 = binaryM (FSub {key=(!get)}) e1 e2
-addM e1 e2 = binaryM (Add {key=(!get)}) e1 e2
-subM e1 e2 = binaryM (Sub {key=(!get)}) e1 e2
-eqM e1 e2 = binaryM (Eq {key=(!get)}) e1 e2
-neqM e1 e2 = binaryM (Neq {key=(!get)}) e1 e2
-ltM e1 e2 = binaryM (Lt {key=(!get)}) e1 e2
-leM e1 e2 = binaryM (Le {key=(!get)}) e1 e2
-gtM e1 e2 = binaryM (Gt {key=(!get)}) e1 e2
-geM e1 e2 = binaryM (Ge {key=(!get)}) e1 e2
-semiM e1 e2 = binaryM (Semi {key=(!get)}) e1 e2
+fMulM e1 e2 = binaryM (\key => FMul {key}) e1 e2
+fDivM e1 e2 = binaryM (\key => FDiv {key}) e1 e2
+fAddM e1 e2 = binaryM (\key => FAdd {key}) e1 e2
+fSubM e1 e2 = binaryM (\key => FSub {key}) e1 e2
+addM e1 e2 = binaryM (\key => Add {key}) e1 e2
+subM e1 e2 = binaryM (\key => Sub {key}) e1 e2
+eqM e1 e2 = binaryM (\key => Eq {key}) e1 e2
+neqM e1 e2 = binaryM (\key => Neq {key}) e1 e2
+ltM e1 e2 = binaryM (\key => Lt {key}) e1 e2
+leM e1 e2 = binaryM (\key => Le {key}) e1 e2
+gtM e1 e2 = binaryM (\key => Gt {key}) e1 e2
+geM e1 e2 = binaryM (\key => Ge {key}) e1 e2
+semiM e1 e2 = binaryM (\key => Semi {key}) e1 e2
 
 lookahead : MinCamlTokenKind -> Grammar state MinCamlToken False MinCamlToken
 lookahead k = nextIs "" (\tok => tok.kind == k)
 lookaheads : List MinCamlTokenKind -> Grammar state MinCamlToken False MinCamlToken
 lookaheads ks = nextIs "" (\tok => tok.kind `elem` ks) 
 
-[a2] Show Bounds where 
-    show (MkBounds ln0 cl0 ln1 cl1) = 
-        if ln0 == ln1 then """
-        line \{show (ln0+1)}, characters \{show (cl0+1)}-\{show (cl1+1)}
-        """
-        else "line \{show (ln0+1)}-\{show (ln1+1)}, characters \{show (cl0+1)}-\{show (cl1+1)}"
+any: Grammar state MinCamlToken True MinCamlToken
+any = terminal "any" (\tok => Just tok)
+
+lookThrough : Grammar state MinCamlToken True (List (WithBounds MinCamlToken))
+lookThrough = do 
+    lparen <- bounds $ match LPAREN
+    toks <- lparen :: manyTill (lookaheads [LPAREN, RPAREN]) any 
+    match RPAREN *> pure toks <|> (lookahead RPAREN) *>(do toks' <- lookThrough; toks'' <- manyTill (match RPAREN) any; pure $ LPAREN :: toks ++ toks' ++ toks'')
+
 
 export
 [a3] Show (WithBounds MinCamlToken) where
@@ -115,60 +128,60 @@ mutual
 
     parseLet: Grammar state MinCamlToken True RT
     parseLet = do 
-        mustWork $ match LET 
-        lookahead REC *> parseLetRec' <|> lookahead LPAREN *> parseLetTuple' <|> parseLet'
+        b <- bounds $ mustWork $ match LET 
+        lookahead REC *> parseLetRec' b <|> lookahead LPAREN *> parseLetTuple' b <|> parseLet' b
     where 
-        parseLet': Grammar state MinCamlToken True RT 
-        parseLet' = do 
+        parseLet': WithBounds () -> Grammar state MinCamlToken True RT 
+        parseLet' b = do 
             fatalErrorExcept (\tok => "expected `let <ident>` or `let _`, got `let \{show tok}`") [IDENT, UNDERSOCRE]
             name <- mustWork $ choose (match IDENT) (match UNDERSOCRE) 
             match EQ 
             e1 <- parseExpr
             match IN
             e2 <- parseExpr
-            pure $ letM (argM name) e1 e2
+            pure $ letM b (argM name) e1 e2
             where 
-                letM: M State String -> RT -> RT -> RT
-                letM id e1 e2 = do
+                letM: WithBounds () -> M State String -> RT -> RT -> RT
+                letM b id e1 e2 = do
                     e1 <- e1; incr
                     e2 <- e2; incr
-                    pure $ (Let !id e1 e2 {key=(!get)})
+                    pure $ MkBounded (Let !id e1.val e2.val {key=(!get (span b e2))}) False (span b e2)
                     -- pure $ (Let !id !newvar e1 e2 {key=(!get)})
 
-        parseLetTuple': Grammar state MinCamlToken True RT
-        parseLetTuple' = let (>>=) = seq in do 
-            mustWork $ match LPAREN 
+        parseLetTuple': WithBounds () -> Grammar state MinCamlToken True RT
+        parseLetTuple' b = let (>>=) = seq in do 
+            match LPAREN 
             name0 <- mustWork $ choose (match IDENT) (match UNDERSOCRE)
             name1:::names <- some (match COMMA *> choose (match IDENT) (match UNDERSOCRE)) <* match RPAREN
             match EQ
             e1 <- parseExpr
             match IN
             e2 <- parseExpr
-            pure $ letTupleM (argsM (name0::name1::Vect.fromList names)) e1 e2
+            pure $ letTupleM b (argsM (name0::name1::Vect.fromList names)) e1 e2
         where
-            letTupleM: {n: Nat} -> M State (Vect (2 + n) String) -> RT -> RT -> RT
-            letTupleM args e1 e2 = do
+            letTupleM: {n: Nat} -> WithBounds () -> M State (Vect (2 + n) String) -> RT -> RT -> RT
+            letTupleM b args e1 e2 = do
                 e1 <- e1; incr
                 e2 <- e2; incr
-                pure $ (LetTuple !args e1 e2 {key=(!get)})
+                pure $ MkBounded (LetTuple !args e1.val e2.val {key=(!get (span b e2))}) False (span b e2)
                 -- pure $ (LetTuple !args !(newvars $ 2 + n) e1 e2 {key=(!get)})
         
-        parseLetRec': Grammar state MinCamlToken True RT
-        parseLetRec' = let (>>=) = seq in do 
+        parseLetRec': WithBounds () -> Grammar state MinCamlToken True RT
+        parseLetRec' b = let (>>=) = seq in do 
             match REC <* commit
             name <- match IDENT
             arg0:::args <- some (choose (match IDENT) (match UNDERSOCRE))
             match EQ
             e1 <- parseExpr
             match IN
-            e2 <- parseExpr
-            pure $ letRecM name (argsM $ arg0::Vect.fromList args) e1 e2
+            e2 <- bounds parseExpr
+            pure $ letRecM b name (argsM $ arg0::Vect.fromList args) e1 e2.val
         where 
-            letRecM: {n: Nat} -> String -> M State (Vect (1 + n) String) -> RT -> RT -> RT
-            letRecM {n} f args e1 e2 = do
+            letRecM: {n: Nat} -> WithBounds () -> String -> M State (Vect (1 + n) String) -> RT -> RT -> RT
+            letRecM {n} b f args e1 e2 = do
             e1 <- e1; incr
             e2 <- e2; incr
-            pure $ (LetRec (MkFunDef f !args e1) e2 {key=(!get), nArgs=n})
+            pure $ MkBounded (LetRec (MkFunDef f !args e1.val) e2.val {key=(!get (span b e2)), nArgs=n}) False (span b e2)
 
     parseSemi: Grammar state MinCamlToken True RT
     parseSemi = do 
@@ -182,26 +195,23 @@ mutual
             e2 <- lookahead LET *> parseLet <|> lookahead IF *> parseIf <|> parsePut
             e2 <- lookahead SEMICOLON *> parseSemi1 e2 <|> pure e2
             pure $ semiM e1 e2
-        where 
-            semiM: RT -> RT -> RT
-            semiM e1 e2 = do e1 <- e1; incr; e2 <- e2; incr; pure $ (Semi e1 e2 {key=(!get)})
 
     parseIf: Grammar state MinCamlToken True RT
     parseIf = do 
-        match IF 
+        b <- bounds (match IF) 
         e1 <- mustWork parseExpr
         match THEN 
         e2 <- mustWork parseExpr
         match ELSE 
         e3 <- lookahead LET *> parseLet <|> lookahead IF *> parseIf <|> mustWork parsePut
-        pure $ ifM e1 e2 e3
+        pure $ ifM b e1 e2 e3
         where 
-            ifM: RT -> RT -> RT -> RT
-            ifM e1 e2 e3 = do 
+            ifM: WithBounds () -> RT -> RT -> RT -> RT
+            ifM b e1 e2 e3 = do 
                 e1 <- e1; incr
                 e2 <- e2; incr
                 e3 <- e3; incr
-                pure $ (If e1 e2 e3 {key=(!get)})
+                pure $ MkBounded (If e1.val e2.val e3.val {key=(!get (span b e3))}) False (span b e3)
     
     parsePut: Grammar state MinCamlToken True RT
     parsePut = do 
@@ -219,7 +229,14 @@ mutual
             putM e1 e2 = do 
                 e1 <- e1; incr
                 e2 <- e2; incr
-                pure $ (Put e1 e2 {key=(!get)})
+                pure $ MkBounded (Put e1.val e2.val {key=(!get (span e1 e2))}) False (span e1 e2)
+            ||| skip over consecutive `(...)` and `.(exp)` to see if the next token is `<-`
+            isPutLhs, isPutLhs': Grammar state MinCamlToken True ()
+            isPutLhs = 
+                lookahead LPAREN *> lookThrough *> isPutLhs' <|> 
+                lookaheads [INT, FLOAT, IDENT, BOOL] *> any *> isPutLhs' <|> fail "not a put lhs"
+            isPutLhs' =
+                match DOT *> lookThrough *> option () isPutLhs' <* lookahead ASSIGN <|> fail "not a put lhs"
 
     parseTuple: Grammar state MinCamlToken True RT
     parseTuple = do 
@@ -233,7 +250,7 @@ mutual
         where 
             tupleM: {n: Nat} -> Vect (2 + n) RT -> RT 
             tupleM {n} es = do 
-                es <- traverse id es; Prelude.pure $ (Tuple es {key=(!get)})
+                es <- traverse id es; Prelude.pure $ MkBounded (Tuple (val <$> es) {key=(!get (span (head es) (last es)))}) False (span (head es) (last es))
 
     parseCmp: Grammar state MinCamlToken True RT
     parseCmp = do 
@@ -291,22 +308,26 @@ mutual
     where
         parseNeg, parseFNeg: Grammar state MinCamlToken True RT
         parseNeg = do 
-            match MINUS
+            b <- bounds (match MINUS)
             e <- lookahead LET *> parseLet <|> lookahead IF *> parseIf <|> parseUnary
-            pure $ negM e
+            pure $ negM b e
             where 
-                negM: RT -> RT
-                negM e = do 
-                    e <- e; incr; case e of F _ => pure $ (FNeg e {key=(!get)});  _ => pure $ (Neg e {key=(!get)})
+                negM: WithBounds () -> RT -> RT
+                negM b e = do 
+                    e <- e; incr
+                    let span = span b e
+                    case e.val of 
+                        F _ => pure $ MkBounded (FNeg e.val {key=(!get span)}) False span
+                        _ => pure $ MkBounded (Neg e.val {key=(!get span)}) False span
 
         parseFNeg = do 
-            match FMINUS
+            b <- bounds (match FMINUS)
             e <- lookahead LET *> parseLet <|> lookahead IF *> parseIf <|> parseUnary
-            pure $ fNegM e
+            pure $ fNegM b e
             where 
-                fNegM: RT -> RT
-                fNegM e = do 
-                    e <- e; incr; pure $ (FNeg e {key=(!get)})
+                fNegM: WithBounds () -> RT -> RT
+                fNegM b e = do 
+                    e <- e; incr; pure $ MkBounded (FNeg e.val {key=(!get (span b e))}) False (span b e)
 
     parseApp: Grammar state MinCamlToken True RT
     parseApp = do 
@@ -324,9 +345,11 @@ mutual
             appM: RT -> List1 RT -> RT
             appM f args = do 
                 f <- f; arg0:::args'' <- args'; incr; 
-                pure $ (App f (arg0::Vect.fromList args'') {key=(!get)})
+                let span = span f (last (arg0::args''))
+                let app = (App f.val (val <$> arg0::Vect.fromList args'') {key=(!get span)})
+                pure $ MkBounded app False span
             where 
-                args' : M State (List1 Node)
+                args' : M State (List1 (WithBounds (Node Key)))
                 args' = traverse (\x => incr >> x) args
 
     parseGet: Grammar state MinCamlToken True RT
@@ -345,7 +368,9 @@ mutual
         where
             getM: RT -> RT -> RT
             getM e1 e2 = do 
-                e1 <- e1; incr; e2 <- e2; incr; pure $ (Get e1 e2 {key=(!get)})
+                e1 <- e1; incr; e2 <- e2; incr
+                let get' = (Get e1.val e2.val {key=(!get (span e1 e2))})
+                pure $ MkBounded get' False (span e1 e2)
 
     parseAtomic: Grammar state MinCamlToken True RT
     parseAtomic = do 
@@ -357,48 +382,50 @@ mutual
     where 
         parseInt, parseFloat, parseIdent, parseParen, parseBool: Grammar state MinCamlToken True RT
         parseInt = do 
-            i <- match INT
+            i <- bounds (match INT)
             -- info "parseInt matched \{i}" $ 
-            when (parseInteger i == Nothing) $ fatalError "illegal integer literal: \{i}"
-            pure $ intM (case parseInteger {a=Int} i of Just x => x; Nothing => 2147483647)
+            when (parseInteger i.val == Nothing) $ fatalError "illegal integer literal: \{i.val}"
+            pure $ intM ((\i => case parseInteger {a=Int} i of Just x => x; Nothing => 2147483647) <$> i)
             where 
-                intM: Int -> RT
-                intM i = pure $ (I i {key=(!get)})
+                intM: WithBounds Int -> RT
+                intM i = pure $ MkBounded (I i.val {key=(!get i.bounds)}) False i.bounds
 
-        parseFloat = let (>>=) = seq in do 
-            f <- match FLOAT
-            let f' = case parseDouble f of Just x => x; Nothing => 0.0 / 0.0
+        parseFloat = let (>>=) = seq in do
+            f <- bounds (match FLOAT) 
+            let f' = (\f => case parseDouble f of Just x => x; Nothing => 0.0 / 0.0) <$> f
             -- info "parseFloat matched \{show f}" $ 
-            when (f /= f) $ fatalError "illegal float literal: \{f}"
+            when (f'.val /= f'.val) $ fatalError "illegal float literal: \{f.val}"
             pure $ floatM f'
             where 
-                floatM: Double -> RT
-                floatM f' = pure $ (F f' {key=(!get)})
+                floatM: WithBounds Double -> RT
+                floatM f' = pure $ MkBounded (F f'.val {key=(!get f'.bounds)}) False f'.bounds
 
         parseIdent = do 
-            name <- match IDENT
+            name <- bounds $ match IDENT
             pure $ identM name
             where 
-                identM: String -> RT
-                identM name = pure $ (Var name {key=(!get)})
+                identM: WithBounds String -> RT
+                identM name = pure $ MkBounded (Var name.val {key=(!get name.bounds)}) False name.bounds
 
         parseParen = do 
-            match LPAREN 
-            e <- (lookahead RPAREN *> parseUnit <* mustWork (match RPAREN)) <|> (parseExpr <* mustWork (match RPAREN))
+            b <- bounds (match LPAREN)
+            e <- (lookahead RPAREN *> parseUnit b) <|> (parseExpr <* mustWork (match RPAREN))
             pure e
             where 
-                parseUnit: Grammar state MinCamlToken False RT
-                parseUnit = pure $ unitM
+                parseUnit: WithBounds () -> Grammar state MinCamlToken True RT
+                parseUnit b = do 
+                    b' <- bounds (match RPAREN)
+                    pure $ unitM b b'
                 where 
-                    unitM: RT
-                    unitM = pure $ (U {key=(!get)})
+                    unitM: WithBounds () -> WithBounds () -> RT
+                    unitM b b' = pure $ MkBounded (U {key=(!get (span b b'))}) False (span b b')
 
         parseBool = do 
-            b <- match BOOL
+            b <- bounds (match BOOL)
             pure $ boolM b
             where 
-                boolM: Bool -> RT
-                boolM b = pure $ (B b {key=(!get)})
+                boolM: WithBounds Bool -> RT
+                boolM b = pure $ MkBounded (B b.val {key=(!get b.bounds)}) False b.bounds
 
 public export
 data ParseError: Type where
@@ -420,15 +447,15 @@ Show ParseError where
 fromParsingError: String -> ParsingError MinCamlToken -> ParseError
 fromParsingError path (Error msg bounds) = ParseErr path msg bounds
 
-parseImpl : (toks: List1 (WithBounds MinCamlToken)) -> Either (List1 (ParsingError MinCamlToken)) Node
+parseImpl : (toks: List1 (WithBounds MinCamlToken)) -> Either (List1 (ParsingError MinCamlToken)) (Node Key)
 parseImpl toks =
   case parse toplevel $ filter (not . ignored) (forget toks) of
-    Right (l, []) => Right (runState initialState l)
+    Right (l, []) => Right (runState initialState l).val
     Right (l, hd::_) => Left (Error "unconsumed token" (Just $ bounds hd):::[])
     Left e => Left e
 
 export
-parse : {default "<string>" path: String} -> String -> Either LexError (Either (List1 ParseError) Node)
+parse : {default "<string>" path: String} -> String -> Either LexError (Either (List1 ParseError) (Node Key))
 parse x = ((convert $ fromParsingError path) . parseImpl) <$> lexMinCaml x
 where convert: Functor f => (a -> b) -> Either (f a) c -> Either (f b) c
       convert f x = mapFst (f <$>) x
