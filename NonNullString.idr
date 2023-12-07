@@ -40,3 +40,8 @@ Cast NonNullString String where
 export 
 (++): NonNullString -> NonNullString -> NonNullString
 MkNonNullStr s1 ++ MkNonNullStr s2 = MkNonNullStr (s1 ++ s2) {p=believe_me 1}
+
+infixr 7 +++
+export
+(+++): String -> NonNullString -> NonNullString
+s1 +++ MkNonNullStr s2 = MkNonNullStr (s1 ++ s2) {p=believe_me 1}

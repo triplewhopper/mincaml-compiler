@@ -8,41 +8,41 @@ import Info
 import Control.Function
 
 public export
-data IdKind = Variable | Temporary | Register | MemoryAddress
+data IdKind = Variable | Temporary {-| Register | MemoryAddress-}
 
 Eq IdKind where
     (==) Variable Variable = True
     (==) Temporary Temporary = True
-    (==) Register Register = True
-    (==) MemoryAddress MemoryAddress = True
+    -- (==) Register Register = True
+    -- (==) MemoryAddress MemoryAddress = True
     (==) _ _ = False
     (/=) x y = not (x == y)
 
 Ord IdKind where
     compare Variable Variable = EQ
     compare Variable Temporary = LT
-    compare Variable Register = LT
-    compare Variable MemoryAddress = LT
+    -- compare Variable Register = LT
+    -- compare Variable MemoryAddress = LT
     compare Temporary Variable = GT
     compare Temporary Temporary = EQ
-    compare Temporary Register = LT
-    compare Temporary MemoryAddress = LT
-    compare Register Variable = GT
-    compare Register Temporary = GT
-    compare Register Register = EQ
-    compare Register MemoryAddress = LT
-    compare MemoryAddress Variable = GT
-    compare MemoryAddress Temporary = GT
-    compare MemoryAddress Register = GT
-    compare MemoryAddress MemoryAddress = EQ
+    -- compare Temporary Register = LT
+    -- compare Temporary MemoryAddress = LT
+    -- compare Register Variable = GT
+    -- compare Register Temporary = GT
+    -- compare Register Register = EQ
+    -- compare Register MemoryAddress = LT
+    -- compare MemoryAddress Variable = GT
+    -- compare MemoryAddress Temporary = GT
+    -- compare MemoryAddress Register = GT
+    -- compare MemoryAddress MemoryAddress = EQ
 
 public export
 data IdName: (k: IdKind) -> Type where
     VarName: (name: NonNullString) -> NodeKeyType -> IdName Variable
     ExtName: (name: NonNullString) -> IdName Variable
     TmpName: (idx: Nat) -> IdName Temporary
-    RegName: (idx: Nat) -> IdName Register
-    MemName: (offset: Int) -> (base: IdName Register) -> IdName MemoryAddress
+    -- RegName: (idx: Nat) -> IdName Register
+    -- MemName: (offset: Int) -> (base: IdName Register) -> IdName MemoryAddress
 
 public export
 data Id : Type where
@@ -60,6 +60,9 @@ public export
 data IsVarName: IdName Variable -> Type where
     IdIsVarName: (x: NonNullString) -> (idx: NodeKeyType) -> IsVarName (VarName x idx)
 
+public export 
+data IsExtName: Id -> Type where
+    IdIsExtName: (x: NonNullString) -> IsExtName (MkId (ExtName x))
 -- %hint
 -- public export
 -- varIsNotExt: {x: NonNullString} -> {idx: NodeKeyType} -> VarName x idx = y -> IsExt y -> Void
@@ -96,14 +99,14 @@ Lemma2 {name} Refl = IdIsKind (ExtName name)
 public export
 Lemma3: {idx: Nat} -> MkId (TmpName idx) = x -> IsKind x Temporary
 Lemma3 {idx} Refl = IdIsKind (TmpName idx)
-%hint
-public export
-Lemma4: {idx: Nat} -> MkId (RegName idx) = x -> IsKind x Register
-Lemma4 {idx} Refl = IdIsKind (RegName idx)
-%hint
-public export
-Lemma5: {offset: Int} -> {base: IdName Register} -> MkId (MemName offset base) = x -> IsKind x MemoryAddress
-Lemma5 {offset} {base} Refl = IdIsKind (MemName offset base)
+-- %hint
+-- public export
+-- Lemma4: {idx: Nat} -> MkId (RegName idx) = x -> IsKind x Register
+-- Lemma4 {idx} Refl = IdIsKind (RegName idx)
+-- %hint
+-- public export
+-- Lemma5: {offset: Int} -> {base: IdName Register} -> MkId (MemName offset base) = x -> IsKind x MemoryAddress
+-- Lemma5 {offset} {base} Refl = IdIsKind (MemName offset base)
 
 export
 (.kind): Id -> IdKind
@@ -114,48 +117,48 @@ export
 (.name) (MkId (VarName (MkNonNullStr name) _)) = name
 (.name) (MkId (ExtName (MkNonNullStr name))) = name
 (.name) (MkId (TmpName idx)) = "__t%" ++ show idx
-(.name) (MkId (RegName idx)) = "%" ++ show idx
-(.name) (MkId (MemName offset (RegName idx))) = "\{show offset}(%%\{show idx})"
+-- (.name) (MkId (RegName idx)) = "%" ++ show idx
+-- (.name) (MkId (MemName offset (RegName idx))) = "\{show offset}(%%\{show idx})"
 
 VariableNotTemporary: Variable = Temporary -> Void
 VariableNotTemporary Refl impossible
-VariableNotRegister: Variable = Register -> Void
-VariableNotRegister Refl impossible
-VariableNotMemoryAddress: Variable = MemoryAddress -> Void
-VariableNotMemoryAddress Refl impossible
-TemporaryNotRegister: Temporary = Register -> Void
-TemporaryNotRegister Refl impossible
-TemporaryNotMemoryAddress: Temporary = MemoryAddress -> Void
-TemporaryNotMemoryAddress Refl impossible
-RegisterNotMemoryAddress: Register = MemoryAddress -> Void
-RegisterNotMemoryAddress Refl impossible
+-- VariableNotRegister: Variable = Register -> Void
+-- VariableNotRegister Refl impossible
+-- VariableNotMemoryAddress: Variable = MemoryAddress -> Void
+-- VariableNotMemoryAddress Refl impossible
+-- TemporaryNotRegister: Temporary = Register -> Void
+-- TemporaryNotRegister Refl impossible
+-- TemporaryNotMemoryAddress: Temporary = MemoryAddress -> Void
+-- TemporaryNotMemoryAddress Refl impossible
+-- RegisterNotMemoryAddress: Register = MemoryAddress -> Void
+-- RegisterNotMemoryAddress Refl impossible
 
 export
 DecEq IdKind where
     decEq Variable Variable = Yes Refl
     decEq Variable Temporary = No VariableNotTemporary
-    decEq Variable Register = No VariableNotRegister
-    decEq Variable MemoryAddress = No VariableNotMemoryAddress
+    -- decEq Variable Register = No VariableNotRegister
+    -- decEq Variable MemoryAddress = No VariableNotMemoryAddress
     decEq Temporary Variable = No (negEqSym VariableNotTemporary)
     decEq Temporary Temporary = Yes Refl
-    decEq Temporary Register = No TemporaryNotRegister
-    decEq Temporary MemoryAddress = No TemporaryNotMemoryAddress
-    decEq Register Variable = No (negEqSym VariableNotRegister)
-    decEq Register Temporary = No (negEqSym TemporaryNotRegister)
-    decEq Register Register = Yes Refl
-    decEq Register MemoryAddress = No RegisterNotMemoryAddress
-    decEq MemoryAddress Variable = No (negEqSym VariableNotMemoryAddress)
-    decEq MemoryAddress Temporary = No (negEqSym TemporaryNotMemoryAddress)
-    decEq MemoryAddress Register = No (negEqSym RegisterNotMemoryAddress)
-    decEq MemoryAddress MemoryAddress = Yes Refl
+    -- decEq Temporary Register = No TemporaryNotRegister
+    -- decEq Temporary MemoryAddress = No TemporaryNotMemoryAddress
+    -- decEq Register Variable = No (negEqSym VariableNotRegister)
+    -- decEq Register Temporary = No (negEqSym TemporaryNotRegister)
+    -- decEq Register Register = Yes Refl
+    -- decEq Register MemoryAddress = No RegisterNotMemoryAddress
+    -- decEq MemoryAddress Variable = No (negEqSym VariableNotMemoryAddress)
+    -- decEq MemoryAddress Temporary = No (negEqSym TemporaryNotMemoryAddress)
+    -- decEq MemoryAddress Register = No (negEqSym RegisterNotMemoryAddress)
+    -- decEq MemoryAddress MemoryAddress = Yes Refl
 
 export
 Eq Id where
     (==) (MkId (VarName n1 i1)) (MkId (VarName n2 i2)) = n1 == n2 && i1 == i2
     (==) (MkId (ExtName n1)) (MkId (ExtName n2)) = n1 == n2
     (==) (MkId (TmpName n1)) (MkId (TmpName n2)) = n1 == n2
-    (==) (MkId (RegName n1)) (MkId (RegName n2)) = n1 == n2
-    (==) (MkId (MemName o1 (RegName r1))) (MkId (MemName o2 (RegName r2))) = o1 == o2 && r1 == r2
+    -- (==) (MkId (RegName n1)) (MkId (RegName n2)) = n1 == n2
+    -- (==) (MkId (MemName o1 (RegName r1))) (MkId (MemName o2 (RegName r2))) = o1 == o2 && r1 == r2
     (==) _ _ = False
     (/=) x y = not (x == y)
 
@@ -164,10 +167,10 @@ Ord Id where
     compare (MkId (VarName n1 i1)) (MkId (VarName n2 i2)) = compare (n1, i1) (n2, i2)
     compare (MkId (ExtName n1)) (MkId (ExtName n2)) = compare n1 n2
     compare (MkId (TmpName n1)) (MkId (TmpName n2)) = compare n1 n2
-    compare (MkId (RegName n1)) (MkId (RegName n2)) = compare n1 n2
-    compare (MkId (MemName o1 (RegName r1))) (MkId (MemName o2 (RegName r2))) = case compare o1 o2 of
-        EQ => compare r1 r2
-        other => other
+    -- compare (MkId (RegName n1)) (MkId (RegName n2)) = compare n1 n2
+    -- compare (MkId (MemName o1 (RegName r1))) (MkId (MemName o2 (RegName r2))) = case compare o1 o2 of
+        -- EQ => compare r1 r2
+        -- other => other
     compare (MkId {k = k1} _) (MkId {k = k2} _) = compare k1 k2
 
 ||| if two variables of type Id are identical, then their kinds are identical
@@ -183,11 +186,11 @@ Injective ExtName where
 Injective TmpName where
     injective Refl = Refl
 
-Injective RegName where
-    injective Refl = Refl
+-- Injective RegName where
+--     injective Refl = Refl
 
-Biinjective MemName where
-    biinjective Refl = (Refl, Refl)
+-- Biinjective MemName where
+--     biinjective Refl = (Refl, Refl)
 
 varNameNotEqExtName: VarName name idx = ExtName name' -> Void
 varNameNotEqExtName Refl impossible
@@ -221,13 +224,13 @@ export
 DecEq (IdName Temporary) where 
     decEq (TmpName idx1) (TmpName idx2) = decEqCong (decEq idx1 idx2)
 
-export 
-DecEq (IdName Register) where 
-    decEq (RegName idx1) (RegName idx2) = decEqCong (decEq idx1 idx2)
+-- export 
+-- DecEq (IdName Register) where 
+--     decEq (RegName idx1) (RegName idx2) = decEqCong (decEq idx1 idx2)
 
-export 
-DecEq (IdName MemoryAddress) where 
-    decEq (MemName offset1 base1) (MemName offset2 base2) = decEqCong2 (decEq offset1 offset2) (decEq base1 base2)
+-- export 
+-- DecEq (IdName MemoryAddress) where 
+--     decEq (MemName offset1 base1) (MemName offset2 base2) = decEqCong2 (decEq offset1 offset2) (decEq base1 base2)
 
 export 
 DecEq Id where 
@@ -253,8 +256,8 @@ Show Id where
     show (MkId (VarName (MkNonNullStr name) idx)) = name ++ "'\{show idx}"
     show (MkId (ExtName (MkNonNullStr name))) = name
     show (MkId (TmpName idx)) = "__tmp'\{show idx}"
-    show (MkId (RegName idx)) = "__reg'\{show idx}"
-    show (MkId (MemName offset (RegName idx))) = "\{show offset}(%%\{show idx})"
+    -- show (MkId (RegName idx)) = "__reg'\{show idx}"
+    -- show (MkId (MemName offset (RegName idx))) = "\{show offset}(%%\{show idx})"
 
 export
 Interpolation Id where

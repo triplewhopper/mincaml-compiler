@@ -154,7 +154,7 @@ ignored (MkBounded (Tok COMMENT _) _ _) = True
 ignored _ = False
 
 identifier : Lexer
-identifier = ((is '_' <|> alpha) <+> some (is '\'' <|> is '_' <|> alphaNum)) <|> alpha
+identifier = ((is '_' <|> lower) <+> some (is '\'' <|> is '_' <|> alphaNum)) <|> alpha
 
 array_create: Lexer
 array_create = exact "Array" <+> many space <+> is '.' <+> many space <+> (exact "create" <|> exact "make")

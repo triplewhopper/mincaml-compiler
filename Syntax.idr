@@ -18,6 +18,7 @@ public export
 data SyntaxError: Type where
     SyntaxErr: String -> SyntaxError
 
+
 mutual
     public export
     record FunDef (a: Type) (nArgs: Nat) where
@@ -43,6 +44,7 @@ mutual
         FNeg: {key: a} -> Node a -> Node a
 
         App: {key: a} -> {n: Nat} -> Node a -> Vect (1 + n) (Node a) -> Node a
+        -- App: {key: a} -> Node a -> Node a -> Node a
 
         FMul: {key: a} -> Node a -> Node a -> Node a
         FDiv: {key: a} -> Node a -> Node a -> Node a

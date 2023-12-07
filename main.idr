@@ -1,13 +1,12 @@
 module Main
 
-import Ty
-import Id
+import Binding
 import Syntax
 import Lexer
-import Parser2
+import Parser
 import Utils
 import Info
-import Typing
+import Typing2
 import KNormal
 import Assoc 
 import Beta
@@ -73,17 +72,21 @@ options = [
   MkOpt [] ["show-beta"] (NoArg ShowBeta) "show beta-reduced AST",
   MkOpt ['h'] ["help"] (NoArg ShowHelp) "show help message"
 ]
-iter: (Info a) => Result Flag -> String -> Nat -> KNormal a env -> IO (KNormal a env)
+iter: (Info a) => Result Flag -> String -> Nat -> KNormal a -> IO (KNormal a)
 iter res path Z kn = pure kn
 iter res path (S n) kn = do 
   putStr $ "iter " ++ show n ++ "..."
-  let an = Assoc.f kn
-  let bn = Beta.f an
-  if bn == kn then do 
+  let (modified1, an) = Assoc.f kn
+  let (modified2, bn) = Beta.f an
+  if null modified1 && null modified2 then do 
     putStrLn "no change;"
     pure kn 
     else do 
     putStrLn "done."
+    when (not (null modified2)) $ do 
+      putStrLn $ "beta-reduced: " ++ show (length modified2) ++ " nodes"
+      for_ modified2 $ \i => do 
+        putStrLn $ show i.span
     when (ShowANormal `elem` res.options) $ do
       let s = show an
       Right () <- writeFile (path ++ ".a-norm#\{show n}.ml") s
@@ -145,9 +148,8 @@ main = do
           Right (Right node) => pure node
         -- putStrLn $ "File \{show path}:\n" ++ show node
         (nodesTy, extEnv, ty) <- case infer' {path} node of 
-          Left e => die "\{path}: \{show e}"
-          Right (Left e) => die "\{path}: \{show e}"
-          Right (Right (nodesTy, extEnv, ty)) => do 
+          Left e => die e
+          Right (nodesTy, extEnv, ty) => do 
             when (ShowExtEnv `elem` res.options) $ do
               Right () <- writeFile (path ++ ".extenv.txt") ("\n" `joinBy` (\(x, y) => show x ++ " : " ++ show y) <$> toList extEnv)
                 | Left err => die $ "Failed to write extenv to file \{show path}.extenv.txt: " ++ show err

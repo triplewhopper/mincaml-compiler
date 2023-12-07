@@ -49,13 +49,13 @@ mutual
         IfLEf: {key: a} -> Id -> Id -> Exp a -> Exp a -> Exp a
         Let: {key: a} -> IdName Variable -> Ty -> Exp a -> Exp a -> Exp a
         LetTmp: {key: a} -> IdName Temporary -> Ty -> Exp a -> Exp a -> Exp a
-        MakeCls: {key: a} -> {n: Nat} -> Binding -> Closure a n -> Exp a -> Exp a
+        MakeCls: {key: a} -> {n, arity': Nat} -> FunBinding arity' -> Closure a n -> Exp a -> Exp a
         LetTuple: {key: a} -> {n: Nat} -> Vect (S (S n)) Binding -> Id -> Exp a -> Exp a
 
     public export
     record FunDef (a: Type) (arity': Nat) where
         constructor MkFunDef
-        name: Binding
+        name: FunBinding arity'
         args: Vect (S arity') Binding
         formalFv: List Binding
         body: Exp a
@@ -104,7 +104,7 @@ fv (IfLEi x y e1 e2) = insert' x (insert' y (union (fv e1) (fv e2)))
 fv (IfLEf x y e1 e2) = insert' x (insert' y (union (fv e1) (fv e2)))
 fv (Let x _ e1 e2) = union (fv e1) (delete x (fv e2))
 fv (LetTmp _ _ e1 e2) = union (fv e1) (fv e2)
-fv (MakeCls (x, _) (Cls entry actualFv) e) = delete x (union (fromList (toList actualFv)) (fv e))
+fv (MakeCls fnbinding (Cls entry actualFv) e) = delete fnbinding.name (union (fromList (toList actualFv)) (fv e))
 fv (LetTuple xs y e) = insert' y (difference (fv e) (fromList (toList (fst <$> xs))))
 
 -- Show a => Show (Closure a n) where
@@ -161,17 +161,17 @@ g known (LetTmp {key} x t e1 e2) = do
     e1' <- g known e1
     e2' <- g known e2
     pure (LetTmp {key} x t e1' e2')
-g known (LetRec {key} (MkFunDef (x, t) args e1) e2) = do
+g known (LetRec {key} (MkFunDef fnbinding@(MkFunBinding x _ _) args e1) e2) = do
     backup <- get
     let known' = insert x known
-    e1' <- local (insertFrom ((x, t)::args)) (g known' e1)
+    e1' <- local (insertFrom (cast fnbinding::args)) (g known' e1)
     let zs = difference (fv e1') (fromList (toList (fst <$> args)))
     (known', e1') <-
         if zs /= empty then do
             info "free variable(s) \{joinBy ", " (show <$> SortedSet.toList zs)} found in function `\{x}`." pure ()
             info "function \{x} cannot be directly applied in fact." pure ()
             put backup
-            e1' <- local (insertFrom ((x, t)::args)) (g known e1)
+            e1' <- local (insertFrom (cast fnbinding::args)) (g known e1)
             pure (known, e1')
         else do
             pure (known', e1')
@@ -180,10 +180,10 @@ g known (LetRec {key} (MkFunDef (x, t) args e1) e2) = do
     let zts: List Binding = foldl (\acc, (z, t) => case t of 
             Nothing => warn "in Closure.g, collecting free vars for function `\{x}` of type `\{show t}`: \{z} has no type!!!!" acc
             Just t => (z, t)::acc) [] zts
-    modify (\toplevel => Prelude.(::) (_ ** MkFunDef (x, t) args zts e1') toplevel)
-    e2' <- local (insert x t) (g known' e2)
+    modify (\toplevel => Prelude.(::) (_ ** MkFunDef fnbinding args zts e1') toplevel)
+    e2' <- local (insert x fnbinding.fnty) (g known' e2)
     if contains x (fv e2') then
-        pure (MakeCls {key} (x, t) (Cls (MkLabel x) (fromList $ fst <$> zts)) e2')
+        pure (MakeCls {key} fnbinding (Cls (MkLabel x) (fromList $ fst <$> zts)) e2')
         else info "eliminating closure \{x}" pure e2'
 
 g known (LetTuple {key} xs y e) = do
