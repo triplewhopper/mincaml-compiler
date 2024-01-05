@@ -2,7 +2,6 @@ import enum
 from typing import Tuple as Tup, Literal, Callable, List, TypeVar, Generic, ChainMap, Set, FrozenSet, Self, Protocol, \
     cast
 from contextlib import contextmanager
-from abc import ABC, abstractmethod
 
 from ty import *
 from withbounds import WithBounds, merge
@@ -251,22 +250,6 @@ class Ext(KNormal):
     @property
     def name(self) -> GlobalId:
         return self._name
-
-
-# class ExtArray(Ext):
-#     __slots__ = []
-#
-#     def __init__(self, name: WithBounds[str], typ: TyArray):
-#         assert isinstance(typ, TyArray)
-#         super().__init__(name, typ)
-#
-#
-# class ExtFun(Ext):
-#     __slots__ = []
-#
-#     def __init__(self, name: WithBounds[str], typ: TyFun):
-#         assert isinstance(typ, TyFun)
-#         super().__init__(name, typ)
 
 
 class Get(KNormal):
@@ -734,9 +717,6 @@ class Function:
     def get_arg_name(self, i: int) -> LocalId:
         return self._formal_args[i]
 
-    def get_return_type(self) -> Ty:
-        return self._typ.ret
-
     def get_n_args(self) -> int:
         return len(self._formal_args)
 
@@ -776,7 +756,7 @@ class LetRec(KNormal):
     def __str__(self):
         args = ' '.join(
             f"({self._f.get_arg_name(i)}: {self._f.get_arg_type(i)})" for i in range(self._f.get_n_args()))
-        ret = self._f.get_return_type()
+        ret = self._f.get_type().ret
         return f"(let rec {self._f.funct} {args}: {ret} = {self._f.body} in {self._e})"
 
 
@@ -818,9 +798,9 @@ class KNormalizer(syntax.NodeVisitor):
         x = TmpId(self._counter)
         self._counter += 1
         if len(s := str(kn1)) > 40:
-            logger.info(f"generating fresh variable '{x}' for {s[:20]} ... {s[-20:]}")
+            logger.info(f"generating fresh variable '%s' for %s ... %s", x, s[:20], s[-20:])
         else:
-            logger.info(f"generating fresh variable '{x}' for {s}")
+            logger.info(f"generating fresh variable '%s' for %s", x, s)
         kn2 = k(x)
         return Let(x, kn1, kn2, merge(kn1.bounds, kn2.bounds))
 
@@ -1009,10 +989,6 @@ class KNormalVisitor(ABC, Generic[T]):
     def visit_Ext(self, node: Ext) -> T:
         pass
 
-    # @abstractmethod
-    # def visit_ExtFun(self, node: ExtFun) -> T:
-    #     pass
-
     @abstractmethod
     def visit_Get(self, node: Get) -> T:
         pass
@@ -1056,93 +1032,3 @@ class KNormalVisitor(ABC, Generic[T]):
     @abstractmethod
     def visit_LetRec(self, node: LetRec) -> T:
         pass
-
-# class UnitElim(KNormalVisitor[KNormal | None]):
-#     def __init__(self):
-#         self._env = ChainMap[Id, KNormal]()
-#
-#     def visit(self, node: KNormal) -> KNormal | None:
-#         return super().visit(node)
-#
-#     def visit_Lit(self, node: Lit) -> KNormal | None:
-#         if node.get_type() is TyUnit():
-#             return None
-#         return node
-#
-#     def visit_Var(self, node: Var) -> KNormal | None:
-#         if node.get_type() is TyUnit():
-#             return None
-#         return node
-#
-#     def visit_Ext(self, node: Ext) -> KNormal:
-#         assert node.get_type() is not TyUnit(), f"external variable {node} does not have array type"
-#         return node
-#
-#     def visit_Get(self, node: Get) -> KNormal:
-#         match self._env[node.array].get_type():
-#             case TyArray(TyUnit()):
-#                 logger.warning(f"aggressively eliminating unit array read access {node}")
-#                 return Lit.unit_with_bounds(node.bounds)
-#             case _:
-#                 return node
-#
-#     def visit_Unary(self, node: Unary) -> KNormal:
-#         assert node.get_type() is not TyUnit()
-#         return node
-#
-#     def visit_App(self, node: App) -> KNormal:
-#         if any(self._env[x].get_type() is TyUnit() for x in node.args):
-#             non_unit_args = []
-#             eliminated_args = []
-#             for x in node.args:
-#                 kn = self._env[x]
-#                 if kn.get_type() is TyUnit():
-#                     eliminated_args.append(x)
-#                 else:
-#                     non_unit_args.append((x, kn))
-#             if not non_unit_args:
-#                 with App.relax_min_n_args():
-#                     res = App(node.callee, self._env[node.callee])
-#             else:
-#                 res = App(node.callee, self._env[node.callee], *non_unit_args)
-#             logger.info(f"eliminating unit argument(s): {node} => {res}")
-#             return res
-#         return node
-#
-#     def visit_Binary(self, node: Binary) -> KNormal:
-#         return node
-#
-#     def visit_Tuple(self, node: Tuple) -> KNormal:
-#         if any(self._env[x].get_type() is TyUnit() for x in node.elems):
-#             non_unit_elems = []
-#             eliminated_elems = []
-#             for x in node.elems:
-#                 kn = self._env[x]
-#                 if kn.get_type() is TyUnit():
-#                     eliminated_elems.append(x)
-#                 else:
-#                     non_unit_elems.append((x, kn))
-#             match non_unit_elems:
-#                 case []:
-#                     res = Lit.unit_with_bounds(node.bounds)
-#                 case [(_, kn)]:
-#                     res = kn
-#                 case _:
-#                     res = Tuple(*non_unit_elems)
-#             if eliminated_elems:
-#                 logger.info(f"eliminating unit element(s): {node} => {res}")
-#             return res
-#         return node
-#
-#     def visit_Put(self, node: Put) -> KNormal:
-#         match self._env[node.array].get_type():
-#             case TyArray(TyUnit()):
-#                 res = Lit(WithBounds(cast(Literal['()'], '()'), node.bounds))
-#                 logger.warning(f"aggressively eliminating unit array write access: {node} => {res}")
-#                 return res
-#             case _:
-#                 return node
-#
-#     def visit_If(self, node: If) -> KNormal:
-#         br_true = self.visit(node.br_true)
-#         br_false = self.visit(node.br_false)

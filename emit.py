@@ -1,5 +1,5 @@
 import logging
-from typing import List, Set, Dict, Tuple as Tup
+from typing import List, Set, Dict, Tuple as Tup, Callable, Iterable
 import llvmlite.ir as ir
 import llvmlite.binding as binding
 import closure as cl
@@ -113,7 +113,7 @@ target_data = binding.create_target_data(rv32_layout)
 #         self._env = self._env.parents
 #
 
-class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
+class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant | None]):
     @staticmethod
     @lru_cache(maxsize=128)
     def get_ir_ty(typ: ty.Ty) -> ir.Type:
@@ -123,7 +123,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
                 #  optimize unit to void, e.g. a function of type unit -> unit should be void -> void
                 #  likewise, unit array should be void array, i.e. void*, and every read/write should be a no-op,
                 #  as long as there is no side effect.
-                return ir.IntType(8)
+                return ir.VoidType()
             case ty.TyInt():
                 return ir.IntType(32)
             case ty.TyFloat():
@@ -131,7 +131,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             case ty.TyBool():
                 return ir.IntType(8)
             case ty.TyTuple(elems):
-                ir_ty = ir.LiteralStructType([IREmitter.get_ir_ty(e) for e in elems])
+                ir_ty = ir.LiteralStructType([IREmitter.get_ir_ty(e) for e in elems if e is not ty.TyUnit()])
                 logger.info(f"min-caml type '{typ}' maps to LLVM type '{ir_ty}'")
                 return ir_ty
             case ty.TyArray(ty.TyUnit()):
@@ -143,18 +143,23 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
                 logger.info(f"min-caml type '{typ}' maps to LLVM type '{ir_ty}'")
                 return ir_ty
             case ty.TyFun(args, ret):
-                args_ir_ty = [IREmitter.get_ir_ty(a) for a in args]
+                args_ir_ty = [IREmitter.get_ir_ty(a) for a in args if a is not ty.TyUnit()]
                 ir_ty = ir.FunctionType(IREmitter.get_ir_ty(ret), args_ir_ty)
                 ir_ty = ir.PointerType(ir_ty)
                 logger.info(f"min-caml type '{typ}' maps to LLVM type '{ir_ty}'")
                 return ir_ty
 
+    @staticmethod
+    def get_ir_tys(typs: Iterable[ty.Ty], non_void=True) -> List[ir.Type]:
+        if non_void:
+            return [IREmitter.get_ir_ty(t) for t in typs if t is not ty.TyUnit()]
+        else:
+            return [IREmitter.get_ir_ty(t) for t in typs]
+
     def get_fn_decl(self, fns: Set[kn.GlobalId], ml_ty: ty.TyFun) -> Dict[kn.GlobalId, ir.Function]:
         declared: Dict[str, ir.Function] = {}
         ans: Dict[kn.GlobalId, ir.Function] = {}
-        ir_ext_fn_ty = ir.FunctionType(
-            IREmitter.get_ir_ty(ml_ty.ret),
-            [IREmitter.get_ir_ty(a) for a in ml_ty.args])
+        ir_ext_fn_ty = ir.FunctionType(IREmitter.get_ir_ty(ml_ty.ret), IREmitter.get_ir_tys(ml_ty.args))
         assert isinstance(ir_ext_fn_ty, ir.FunctionType)
         for fn in fns:
             name = fn.val.val
@@ -164,8 +169,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
                 ir_fn_decl = ir.Function(module=self.module, ftype=ir_ext_fn_ty, name='min_caml_' + name)
                 logger.info(f"Creating external function declaration @{ir_fn_decl.name} of type '{ir_fn_decl.type}'")
 
-                assert len(ml_ty.args) == len(ir_fn_decl.args)
-                for i, arg in zip(range(len(ml_ty.args)), ir_fn_decl.args):
+                for i, arg in enumerate(ir_fn_decl.args):
                     arg.add_attribute('noundef')
                     # arg.name = f"arg{i}"
 
@@ -177,6 +181,74 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             else:
                 ans[fn] = declared[name]
         return ans
+
+    def get_cls_decl(self, ml_fn: cl.Function) -> Tup[
+        ir.Function, Callable[[ir.IRBuilder], Dict[kn.LocalId, ir.NamedValue | None]]]:
+        arg_tys = []
+        arg_names = []
+        for i, (arg, t) in enumerate(ml_fn.iter_args()):
+            if t is not ty.TyUnit():
+                arg_tys.append(IREmitter.get_ir_ty(t))
+                arg_names.append(arg)
+        fv_tys = []
+        fv_names = []
+        for i, (fv, t) in enumerate(ml_fn.formal_fv):
+            if t is not ty.TyUnit():
+                fv_tys.append(IREmitter.get_ir_ty(t))
+                fv_names.append(fv)
+        fn_ir_ret_ty = IREmitter.get_ir_ty(ml_fn.get_type().ret)
+        if fv_tys:
+            fv_struct_ptr_ty = ir.PointerType(ir.LiteralStructType(fv_tys))
+            ml_fn_ir_ty = ir.FunctionType(fn_ir_ret_ty, [*arg_tys, fv_struct_ptr_ty])
+        else:
+            fv_struct_ptr_ty = None
+            ml_fn_ir_ty = ir.FunctionType(fn_ir_ret_ty, arg_tys)
+
+        del arg_tys, fn_ir_ret_ty
+
+        ir_fn = ir.Function(self.module, ml_fn_ir_ty, name=str(ml_fn.funct))
+        # ir_fn.calling_convention = 'tailcc'
+        ir_fn.append_basic_block(name="entry")
+        logger.info(f"Creating local function declaration @{ir_fn.name} of type '{ir_fn.type}'")
+        if fv_struct_ptr_ty is not None:
+            logger.info(
+                f"function @{ir_fn.name} has an extra argument of type '{fv_struct_ptr_ty}' for passing free variables")
+
+        for i in range(len(arg_names)):
+            ir_fn.args[i].add_attribute('noundef')
+            ir_fn.args[i].name = str(arg_names[i])
+
+        if fv_struct_ptr_ty is None:
+            assert len(arg_names) == len(ir_fn.args)
+        else:
+            assert len(arg_names) + 1 == len(ir_fn.args)
+            ir_fn.args[-1].name = "fv.struct.ptr"
+            ir_fn.args[-1].add_attribute('nonnull')
+            ir_fn.args[-1].add_attribute('noundef')
+        del ml_fn_ir_ty
+
+        def get_fn_local_env(builder: ir.IRBuilder) -> Dict[kn.LocalId, ir.NamedValue | None]:
+            ir_fn_local_env = {}
+            j = 0
+            for name, t in ml_fn.iter_args():
+                if t is not ty.TyUnit():
+                    ir_fn_local_env[name] = ir_fn.args[j]
+                    j += 1
+                else:
+                    ir_fn_local_env[name] = None
+            if fv_struct_ptr_ty is not None:
+                j = 0
+                fv = builder.load(ir_fn.args[-1], name=f"fv.struct")
+                for name, t in ml_fn.formal_fv:
+                    if t is not ty.TyUnit():
+                        ir_fn_local_env[name] = builder.extract_value(fv, j, name=f"fv.{name}")
+                        j += 1
+                    else:
+                        ir_fn_local_env[name] = None
+
+            return ir_fn_local_env
+
+        return ir_fn, get_fn_local_env
 
     def get_arr_decl(self, arrs: Set[kn.GlobalId], ml_ext_ty: ty.TyArray) -> Dict[kn.GlobalId, ir.GlobalVariable]:
         declared: Dict[str, ir.GlobalVariable] = {}
@@ -196,7 +268,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
         return ans
 
     def __init__(self, ext_fns: Dict[ty.TyFun, Set[kn.GlobalId]], ext_arrays: Dict[ty.TyArray, Set[kn.GlobalId]],
-                 ml_global_fns: List[cl.Function], main: cl.Exp):
+                 ml_local_fns: List[cl.Function], main: cl.Exp):
         # module
         self.module = ir.Module(name=__file__)
         self.module.triple = rv32_triple
@@ -210,7 +282,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
         logger.info(f"Creating function @{self.ir_main.name} with type '{ir_main_ty}'")
         self.ir_main.append_basic_block(name="entry")
 
-        self._env: ChainMap[kn.Id, ir.NamedValue] = ChainMap()
+        self._env: ChainMap[kn.Id, ir.NamedValue | None] = ChainMap()
         del ir_main_ty
 
         for ext_arr_ty, ext_arrs in ext_arrays.items():
@@ -220,90 +292,51 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             self._env.update(self.get_fn_decl(ext_fns, ext_fn_ty))
 
         self._env = self._env.new_child()
+        self._mk_local_fn_env: Dict[kn.LocalId, Callable[[ir.IRBuilder], Dict[kn.LocalId, ir.NamedValue | None]]] = {}
         # generate global function declarations
-        for ml_fn in ml_global_fns:
-            arg_tys = map(IREmitter.get_ir_ty, (t for _, t in ml_fn.iter_args()))
-            fv_tys = list(map(IREmitter.get_ir_ty, (t for _, t in ml_fn.formal_fv)))
-            fn_ir_ret_ty = IREmitter.get_ir_ty(ml_fn.get_return_type())
-            if fv_tys:
-                fv_struct_ptr_ty = ir.PointerType(ir.LiteralStructType(fv_tys))
-                ml_fn_ir_ty = ir.FunctionType(fn_ir_ret_ty, [*arg_tys, fv_struct_ptr_ty])
-            else:
-                fv_struct_ptr_ty = None
-                ml_fn_ir_ty = ir.FunctionType(fn_ir_ret_ty, arg_tys)
-
-            del arg_tys, fn_ir_ret_ty
-
+        for ml_fn in ml_local_fns:
             assert ml_fn.funct not in self._env, f"why function {ml_fn.funct} is already defined?"
-            ir_fn = ir.Function(self.module, ml_fn_ir_ty, name=ml_fn.funct.val.val)
-            # ir_fn.calling_convention = 'tailcc'
-            ir_fn.append_basic_block(name="entry")
-            logger.info(f"Creating local function declaration @{ir_fn.name} of type '{ir_fn.type}'")
-            if fv_struct_ptr_ty is not None:
-                logger.info(
-                    f"function @{ir_fn.name} has an extra argument of type '{fv_struct_ptr_ty}' for passing free variables")
-
-            self._env[ml_fn.funct] = ir_fn
-            for i, arg in zip(range(ml_fn.get_n_args()), ir_fn.args):
-                arg.add_attribute('noundef')
-                arg.name = str(ml_fn.get_arg_name(i))
-
-            if fv_tys:
-                ir_fn.args[-1].name = "fv.struct.ptr"
-                ir_fn.args[-1].add_attribute('nonnull')
-                ir_fn.args[-1].add_attribute('noundef')
-            del ml_fn_ir_ty
-
+            f, g = self.get_cls_decl(ml_fn)
+            self._env[ml_fn.funct] = f
+            self._mk_local_fn_env[ml_fn.funct] = g
         # initialization for global functions
-        assert len(ml_global_fns) == len(self._env.maps[0])
+        assert len(ml_local_fns) == len(self._env.maps[0])
         assert len(self._env.maps) == 2
 
-        for ml_fn, ir_fn in zip(ml_global_fns, self._env.maps[0].values()):
+        for ml_fn, ir_fn in zip(ml_local_fns, self._env.maps[0].values()):
             assert isinstance(ir_fn, ir.Function)
             self.builder = ir.IRBuilder(ir_fn.blocks[0])
-            assert len(self._env.maps[0]) == len(ml_global_fns)
+            assert len(self._env.maps[0]) == len(ml_local_fns)
 
-            ir_fn_local_env = {}
-            for i, arg in zip(range(ml_fn.get_n_args()), ir_fn.args):
-                name_i = ml_fn.get_arg_name(i)
-                ir_fn_local_env[name_i] = arg
-
-            if ml_fn.get_n_args() != len(ir_fn.args):
-                raise NotImplementedError("TODO: handle free variables")
-                # assert ml_fn.get_n_args() + 1 == len(ir_fn.args)
-                # fv_struct_ptr = ir_fn.args[-1]
-                # assert isinstance(fv_struct_ptr.type, ir.PointerType)
-                # assert isinstance(fv_struct_ptr.type.pointee, ir.LiteralStructType)
-                # assert len(ml_fn.formal_fv) == len(fv_struct_ptr.type.pointee.elements)
-                # for i, ((elem, _), elem_ty) in enumerate(zip(ml_fn.formal_fv, fv_struct_ptr.type.pointee.elements)):
-                #     fv_elem_ptr = self.builder.gep(fv_struct_ptr, [ir.IntType(32)(0), ir.IntType(32)(i)])
-                #     ir_fn_local_env[elem] = self.builder.load(fv_elem_ptr, name=f"fv.{elem.val}")
-
-            self._env = self._env.new_child(ir_fn_local_env)
-            del ir_fn_local_env, i, arg
-
-            self.builder.ret(self.visit(ml_fn.body))
+            self._env = self._env.new_child(self._mk_local_fn_env[ml_fn.funct](self.builder))
+            del self._mk_local_fn_env[ml_fn.funct]
+            r = self.visit(ml_fn.body)
+            if r is not None:
+                assert r.type != ir.VoidType()
+                self.builder.ret(r)
+            else:
+                self.builder.ret_void()
             self._env: ChainMap[kn.Id, ir.NamedValue] = self._env.parents
 
         self.builder = ir.IRBuilder(self.ir_main.blocks[0])
         assert len(self._env.maps) == 2
-        assert len(self._env.maps[0]) == len(ml_global_fns)
+        assert len(self._env.maps[0]) == len(ml_local_fns)
         self.visit(main)
         self.builder.ret(ir.IntType(32)(0))
 
-    def lookup(self, key: kn.Id) -> ir.NamedValue | ir.Constant | ir.LoadInstr:
+    def lookup(self, key: kn.Id) -> ir.NamedValue | ir.Constant | ir.LoadInstr | None:
         v = self._env[key]
         if isinstance(v, ir.GlobalVariable):
             return self.builder.load(v)
         return v
 
-    def visit(self, node: cl.Exp) -> ir.NamedValue | ir.Constant:
+    def visit(self, node: cl.Exp) -> ir.NamedValue | ir.Constant | None:
         v = super().visit(node)
-        assert v.type == IREmitter.get_ir_ty(
-            node.get_type()) or v.type == ir.VoidType() and node.get_type() is ty.TyUnit()
+        assert v is None and node.get_type() is ty.TyUnit() or v.type == IREmitter.get_ir_ty(
+            node.get_type()) and v.type != ir.VoidType()
         return v
 
-    def visit_Lit(self, node: cl.Lit) -> ir.Constant:
+    def visit_Lit(self, node: cl.Lit) -> ir.Constant | None:
         match node.val.val:
             case bool() as v:
                 return IREmitter.get_ir_ty(node.get_type())(int(v))
@@ -312,7 +345,7 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             case float() as v:
                 return IREmitter.get_ir_ty(node.get_type())(v)
             case '()':
-                return ir.IntType(8)(0)
+                return None
             case _:
                 raise NotImplementedError()
 
@@ -379,20 +412,25 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
 
     def visit_AppCls(self, node: cl.AppCls) -> ir.CallInstr:
         raise NotImplementedError()
-        callee = self, lookup(node.callee)
+        callee = self.lookup(node.callee)
+        args = [self.lookup(e) for e in node.args]
+        args = [arg for arg in args if arg is not None]
         return self.builder.call(
             callee, [self.lookup(e) for e in node.args], tail='tail')
 
-    def visit_AppDir(self, node: cl.AppDir) -> ir.CallInstr:
+    def visit_AppDir(self, node: cl.AppDir) -> ir.CallInstr | None:
         callee = self.lookup(node.callee)
         assert isinstance(callee, ir.Function)
         if callee.function_type.return_type == ir.FloatType():
             fastmath = ('fast',)
         else:
             fastmath = ()
-        return self.builder.call(
-            callee, [self.lookup(e) for e in node.args], tail='tail',
-            fastmath=fastmath)
+        args = [self.lookup(e) for e in node.args]
+        args = [arg for arg in args if arg is not None]
+        v = self.builder.call(callee, args, tail='tail', fastmath=fastmath)
+        if v.type == ir.VoidType():
+            return None
+        return v
 
     def visit_Binary(self, node: cl.Binary) -> ir.Instruction | ir.NamedValue | ir.Constant:
         e1, e2 = self.lookup(node.e1), self.lookup(node.e2)
@@ -432,11 +470,10 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             case _:
                 raise NotImplementedError(node.op, node.get_type())
 
-    def visit_Seq(self, node: cl.Seq) -> ir.NamedValue | ir.Constant:
+    def visit_Seq(self, node: cl.Seq) -> ir.NamedValue | ir.Constant | None:
         r = None
         for e in node.es:
             r = self.visit(e)
-        assert r is not None
         return r
 
     def visit_Tuple(self, node: cl.Tuple) -> ir.Constant | ir.NamedValue:
@@ -451,15 +488,14 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
             self.builder.store(v, gep)
         return self.builder.load(tup_ptr, name="tuple")
 
-    def visit_Put(self, node: cl.Put) -> ir.Constant:
+    def visit_Put(self, node: cl.Put) -> None:
         arr = self.lookup(node.array)
         idx = self.lookup(node.index)
         val = self.lookup(node.value)
         gep = self.builder.gep(arr, [idx])
         self.builder.store(val, gep)
-        return ir.IntType(8)(0)
 
-    def visit_If(self, node: cl.If) -> ir.PhiInstr:
+    def visit_If(self, node: cl.If) -> ir.PhiInstr | None:
         cond = self.lookup(node.cond)
         cond = self.builder.trunc(cond, ir.IntType(1))
         with self.builder.if_else(cond) as (then, otherwise):
@@ -475,10 +511,15 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
                 # blk_false.name = blk_false.name + '@' + str(node.br_false.bounds[0]) + ':' + str(
                 #     node.br_false.bounds[1])
                 # ...
-        phi = self.builder.phi(IREmitter.get_ir_ty(node.get_type()))
-        phi.add_incoming(br_true, blk_true)
-        phi.add_incoming(br_false, blk_false)
-        return phi
+        t = IREmitter.get_ir_ty(node.get_type())
+        if t != ir.VoidType():
+            assert br_true is not None and br_false is not None
+            phi = self.builder.phi(IREmitter.get_ir_ty(node.get_type()))
+            phi.add_incoming(br_true, blk_true)
+            phi.add_incoming(br_false, blk_false)
+            return phi
+        else:
+            return None
 
     # def store_tuple(self, val: ir.NamedValue | ir.Constant, dst_ptr: ir.NamedValue, idx=()):
     #     assert isinstance(val.type, ir.LiteralStructType)
@@ -495,13 +536,14 @@ class IREmitter(cl.ExpVisitor[ir.NamedValue | ir.Constant]):
 
     def visit_Let(self, node: cl.Let) -> ir.NamedValue | ir.Constant:
         rhs_val = self.visit(node.rhs)
-        lhs_name = str(node.lhs)
-        lhs_ptr = self.builder.alloca(IREmitter.get_ir_ty(node.rhs.get_type()))
-        # if node.rhs.get_type() is ty.TyUnit():
-        #     self.builder.store(ir.IntType(8)(0), lhs_ptr)
-        # else:
-        self.builder.store(rhs_val, lhs_ptr)
-        self._env = self._env.new_child({node.lhs: self.builder.load(lhs_ptr, name=lhs_name)})
+        if node.rhs.get_type() is ty.TyUnit():
+            assert rhs_val is None
+            self._env = self._env.new_child({node.lhs: rhs_val})
+        else:
+            lhs_name = str(node.lhs)
+            lhs_ptr = self.builder.alloca(IREmitter.get_ir_ty(node.rhs.get_type()))
+            self.builder.store(rhs_val, lhs_ptr)
+            self._env = self._env.new_child({node.lhs: self.builder.load(lhs_ptr, name=lhs_name)})
         res = self.visit(node.expr)
         self._env = self._env.parents
         return res

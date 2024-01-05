@@ -80,16 +80,15 @@ Vec3(wscan);
 char buffer[3000000];
 size_t buffer_pos = 0;
 
-char min_caml_print_byte(int x) {
+void min_caml_print_byte(int x) {
 	assert(buffer_pos < 3000000);
 	buffer[buffer_pos++] = x;
-	return 0;
 }
 
-char min_caml_print_int(int x) {
+void min_caml_print_int(int x) {
     if (x == 0) {
         min_caml_print_byte('0');
-        return 0;
+        return;
     }
     if (x < 0) {
         min_caml_print_byte('-');
@@ -104,7 +103,6 @@ char min_caml_print_int(int x) {
     for (int i = pos - 1; i >= 0; i--) {
         min_caml_print_byte(buf[i]);
     }
-    return 0;
 //	switch (x) {
 //		case 768:
 //			min_caml_print_byte('7');
@@ -119,10 +117,9 @@ char min_caml_print_int(int x) {
 //		default:
 //			assert(0);
 //	}
-	return 0;
 }
 
-int min_caml_read_int(char x) {
+int min_caml_read_int() {
 	int i;
 	assert(scanf("%d", &i) == 1);
 	return i;
@@ -207,9 +204,8 @@ float min_caml_read_float(char x) {
 	assert(scanf("%f", &f) == 1);
 	return f;
 }
-char min_caml_print_newline(char x) {
+void min_caml_print_newline(void) {
     min_caml_print_byte('\n');
-    return 0;
 }
 
 float min_caml_cos(float x) {
@@ -232,40 +228,34 @@ float min_caml_floor(float x) {
 	return floorf(x);
 }
 
-char min_caml_debug_raytracing(int nref, float energy, char crashed_p) {
+void min_caml_debug_raytracing(int nref, float energy, char crashed_p) {
 	fprintf(stderr, "raytracing %d %f %s >>>\n", nref, energy, crashed_p ? "true" : "false");
-	return 0;
 }
 
-char min_caml_debug_raytracing2(int nref, float energy, char crashed_p) {
+void min_caml_debug_raytracing2(int nref, float energy, char crashed_p) {
 	fprintf(stderr, "raytracing %d %f %s <<<\n", nref, energy, crashed_p ? "true" : "false");
-	return 0;
 }
 
-char min_caml_debug_tracer(float *viewpoint, float *vscan, float t) {
+void min_caml_debug_tracer(float *viewpoint, float *vscan, float t) {
 	fprintf(stderr, "tracer (%f, %f, %f) (%f, %f, %f) %f\n", viewpoint[0], viewpoint[1], viewpoint[2], vscan[0],
 			vscan[1], vscan[2], t);
-	return 0;
 }
 
-char min_caml_debug_scan_point(float sscanx) {
+void min_caml_debug_scan_point(float sscanx) {
 	fprintf(stderr, "sscanx = %f\n", sscanx);
-	return 0;
 }
 
-char min_caml_debug_read_environ_v1_v2(float v1, float v2) {
+void min_caml_debug_read_environ_v1_v2(float v1, float v2) {
 	fprintf(stderr, "v1 = %f, v2 = %f\n", v1, v2);
 	fprintf(stderr, "cos(v1) = %f, sin(v1) = %f\n", cosf(v1), sinf(v1));
 	fprintf(stderr, "cos(v2) = %f, sin(v2) = %f\n", cosf(v2), sinf(v2));
-	return 0;
 }
 
-char min_caml_debug_read_environ_view(char _) {
+void min_caml_debug_read_environ_view(char _) {
 	fprintf(stderr, "cos_v: %f %f, sin_v: %f %f\n", cos_v[0], cos_v[1], sin_v[0], sin_v[1]);
 	fprintf(stderr, "vp: %f %f %f\n", vp[0], vp[1], vp[2]);
 	fprintf(stderr, "screen: %f %f %f\n", screen[0], screen[1], screen[2]);
 	fprintf(stderr, "view: %f %f %f\n", view[0], view[1], view[2]);
-	return 0;
 }
 
 extern int caml_main();

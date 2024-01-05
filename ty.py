@@ -187,6 +187,14 @@ class TyFun(Ty):
         return self._args
 
     @property
+    def n_non_void_args(self) -> int:
+        ans = 0
+        for arg in self._args:
+            if arg is not TyUnit():
+                ans += 1
+        return ans
+
+    @property
     def ret(self) -> Ty:
         return self._ret
 

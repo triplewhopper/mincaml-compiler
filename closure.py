@@ -69,9 +69,6 @@ class Function:
     def get_arg_name(self, i: int) -> K.LocalId:
         return self._f.get_arg_name(i)
 
-    def get_return_type(self) -> ty.Ty:
-        return self._f.get_return_type()
-
     def get_n_args(self) -> int:
         return len(self._f.formal_args)
 
