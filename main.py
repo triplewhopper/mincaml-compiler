@@ -52,4 +52,5 @@ def main(filename):
 
 
 if __name__ == '__main__':
-    main('samples/min-rt.ml')
+    assert len(sys.argv) == 2
+    main(sys.argv[1])

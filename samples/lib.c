@@ -87,27 +87,40 @@ char min_caml_print_byte(int x) {
 }
 
 char min_caml_print_int(int x) {
-	switch (x) {
-		case 768:
-			min_caml_print_byte('7');
-			min_caml_print_byte('6');
-			min_caml_print_byte('8');
-			break;
-		case 255:
-			min_caml_print_byte('2');
-			min_caml_print_byte('5');
-			min_caml_print_byte('5');
-			break;
-		default:
-			assert(0);
-	}
+    if (x == 0) {
+        min_caml_print_byte('0');
+        return 0;
+    }
+    if (x < 0) {
+        min_caml_print_byte('-');
+        x = -x;
+    }
+    char buf[12];
+    int pos = 0;
+    while (x > 0) {
+        buf[pos++] = x % 10 + '0';
+        x /= 10;
+    }
+    for (int i = pos - 1; i >= 0; i--) {
+        min_caml_print_byte(buf[i]);
+    }
+    return 0;
+//	switch (x) {
+//		case 768:
+//			min_caml_print_byte('7');
+//			min_caml_print_byte('6');
+//			min_caml_print_byte('8');
+//			break;
+//		case 255:
+//			min_caml_print_byte('2');
+//			min_caml_print_byte('5');
+//			min_caml_print_byte('5');
+//			break;
+//		default:
+//			assert(0);
+//	}
 	return 0;
 }
-
-//char print_newline(char x) {
-//	putchar('\n');
-//	return 0;
-//}
 
 int min_caml_read_int(char x) {
 	int i;
@@ -193,6 +206,10 @@ float min_caml_read_float(char x) {
 	float f;
 	assert(scanf("%f", &f) == 1);
 	return f;
+}
+char min_caml_print_newline(char x) {
+    min_caml_print_byte('\n');
+    return 0;
 }
 
 float min_caml_cos(float x) {

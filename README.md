@@ -7,15 +7,21 @@
 
 
 ```zsh
-$ make lexer
-$ python3.11 main.py
 $ docker pull whopper4/group8:clang-riscv
+$ make lexer
+$ make clean
+$ make fib
+20
+6765
+
+real    0m1.304s
+user    0m0.010s
+sys     0m0.012s
+$ make sim what=fib
+$ make min-rt
+$ cp ?? samples/contest.sld # replace ?? with where you put contest.sld
+$ make sim what=min-rt < samples/contest.sld > samples/contest.min-rt.ppm
+
 ```
-and you can see `min-rt.ll` in `samples` directory.
-to change the input file, edit `main.py`, i.e. the argument of `main` function.
-
-After that, run `compile.sh`.
-
-To simulate the program, run `sim.sh`.
 
 If you have any issues, please let me know.
