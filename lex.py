@@ -2,49 +2,35 @@ import os
 import sys
 import base64
 
-from typing import TypeVar, Type, overload
+from typing import TypeVar, Type
 from abc import ABC, abstractmethod
+from bounds import Bounds
 
-T = TypeVar("T")
-
-
-class Loc:
-    def __init__(self, loc: int):
-        self._loc = loc
-
-    @property
-    def loc(self) -> int:
-        return self._loc
+T = TypeVar("T", bool, int, float)
 
 
-class Tok(ABC, Loc):
-    def __init__(self, loc: int, text: str):
-        super().__init__(loc)
+class Tok(ABC):
+    __slots__ = '_text', '_bounds'
+
+    def __init__(self, text: str, b: Bounds):
+        assert isinstance(text, str) and isinstance(b, Bounds)
+        if b.lineno == b.end_lineno:
+            assert b.colno + len(text) == b.end_colno
         self._text = text
+        self._bounds = b
 
     @property
-    def loc(self) -> int:
-        return self._loc
+    def bounds(self) -> Bounds:
+        return self._bounds
 
-    @property
-    def bounds(self) -> tuple[int, int]:
-        return self._loc, self._loc + len(self._text)
+    #
+    # @property
+    # def bounds(self) -> tuple[int, int]:
+    #     return self._loc, self._loc + len(self._text)
 
     @property
     def text(self) -> str:
         return self._text
-
-    @overload
-    def get_val(self, ty: Type[int]) -> int:
-        ...
-
-    @overload
-    def get_val(self, ty: Type[float]) -> float:
-        ...
-
-    @overload
-    def get_val(self, ty: Type[bool]) -> bool:
-        ...
 
     def get_val(self, ty: Type[T]) -> T:
         """ :raises ValueError: if the current token does not match the type"""
@@ -56,13 +42,18 @@ class Tok(ABC, Loc):
     @abstractmethod
     def is_ident(self, capitalized: bool = False) -> bool:
         raise NotImplementedError()
+    
+    def get_ident(self, capitalized: bool = False) -> str:
+        """ :raises ValueError: if the current token is not an identifier"""
+        raise ValueError(self.text)
 
 
 class Val(Tok):
+    __slots__ = '_val'
     __match_args__ = ('val',)
 
-    def __init__(self, loc: int, text: str, val):
-        super().__init__(loc, text)
+    def __init__(self, text: str, val: int | float | bool | str, b: Bounds):
+        super().__init__(text, b)
         self._val = val
 
     def __repr__(self):
@@ -72,36 +63,33 @@ class Val(Tok):
     def val(self):
         return self._val
 
-    def get_val(self, ty):
+    def get_val(self, ty: Type[T]) -> T:
         """ :raises ValueError: if the current token does not match the type"""
-        if ty is bool and isinstance(self._val, bool):
+        if isinstance(self._val, ty) and ty in {bool, int, float}:
             return self._val
-        if ty is int and isinstance(self._val, int):
-            return self._val
-        if ty is float and isinstance(self._val, float):
-            return self._val
+
         raise ValueError(ty)
 
-    def match(self, other) -> bool:
+    def match(self, other: str):
         return False
 
-    def is_ident(self, capitalized: bool = False) -> bool:
+    def is_ident(self, capitalized: bool = False):
         return False
 
 
 class Word(Tok):
-    __match_args__ = ('text',)
-    __keywords = {
+    __match_args__ = 'text',
+    __keywords = frozenset({
         'and', 'as', 'assert', 'asr', 'begin', 'class', 'constraint', 'do', 'done', 'downto', 'else', 'end',
         'exception',
         'external', 'false', 'for', 'fun', 'function', 'functor', 'if', 'in', 'include', 'inherit', 'initializer',
         'land', 'lazy', 'let', 'lor', 'lsl', 'lsr', 'lxor', 'match', 'method', 'mod', 'module', 'mutable', 'new',
         'nonrec', 'object', 'of', 'open', 'or', 'private', 'rec', 'sig', 'struct', 'then', 'to', 'true', 'try', 'type',
         'val', 'virtual', 'when', 'while', 'with'
-    }
+    })
 
-    def __init__(self, loc: int, word: str):
-        super().__init__(loc, word)
+    def __init__(self, word: str, b: Bounds):
+        super().__init__(word, b)
 
     def __repr__(self):
         return f"Word({repr(self.text)})"
@@ -121,50 +109,50 @@ class Word(Tok):
     def get_ident(self, capitalized: bool = False) -> str:
         """ :raises ValueError: if the current token is a keyword or does not match the capitalization"""
         if self.text in self.__keywords:
-            raise ValueError()
+            raise ValueError(self.text)
         if capitalized and not self.text[0].isupper():
-            raise ValueError()
+            raise ValueError(self.text)
         if not capitalized and not (self.text[0].islower() or self.text.startswith('_')):
-            raise ValueError()
+            raise ValueError(self.text)
         return self.text
 
 
 class EOF(Tok):
-    def __init__(self, loc: int):
-        super().__init__(loc, '')
+    def __init__(self, b: Bounds):
+        super().__init__('', b)
 
     def __repr__(self): return f"EOF()"
 
-    def match(self, other: str) -> bool:
+    def match(self, other: str):
         return False
 
-    def is_ident(self, capitalized: bool = False) -> bool:
+    def is_ident(self, capitalized: bool = False):
         return False
 
 
-def lex(filename: str):
-    if os.system(f"./lex {filename} > {filename}.lex"):
+def lex(filepath: str):
+    if os.system(f"./lex {filepath}"):
         raise RuntimeError("Lex failed")
-    with open(f"{filename}.lex") as f:
+    with open(f"{filepath}.lex") as f:
         for line in f:
-            loc, kind, val = line.split()
-            loc = int(loc)
+            _, lineno, colno, end_lineno, end_colno, kind, text = line.split()
+            loc = Bounds(filepath, int(lineno), int(colno), int(end_lineno), int(end_colno))
             match kind:
                 case 'I':
-                    yield Val(loc, val, int(val))
+                    yield Val(text, int(text), loc)
                 case 'B':
-                    yield Val(loc, val, {'true': True, 'false': False}[val])
+                    yield Val(text, {'true': True, 'false': False}[text], loc)
                 case 'F':
-                    yield Val(loc, val, float(val))
+                    yield Val(text, float(text), loc)
                 case 'S':
-                    s = base64.b64decode(val).decode()
-                    yield Val(loc, s, s)
+                    s = base64.b64decode(text).decode()
+                    yield Val(s, s, loc)
                 case 'Op' | 'W':
-                    yield Word(loc, val)
+                    yield Word(text, loc)
                 case 'EOF':
                     yield EOF(loc)
                 case 'E':
-                    e = base64.b64decode(val).decode()
+                    e = base64.b64decode(text).decode()
                     print(e, file=sys.stderr)
                     exit(1)
                 case _:

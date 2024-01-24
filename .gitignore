@@ -16,3 +16,8 @@ venv
 fib
 lex
 Dockerfile
+/raytrace
+**/.*.dot
+**/*.png
+**/*.out
+**/*.assoc.ml

@@ -1,53 +1,41 @@
-import logging
-from typing import List, Literal, Type, TypeVar, Callable, overload, cast
+from collections.abc import Callable
+from typing import Type, TypeVar, overload, Literal, LiteralString
 
-from pyparsing import *
-
-import syntax
-from lex import lex, Val, Word, EOF
+from . import language
+from .errors import UnexpectedTokenError, DuplicateVariableError, WildcardNotAllowedError, \
+    ExpectLowercaseIdentifierError, ExpectUppercaseIdentifierError, WildcardCannotBeFunctionNameError, \
+    FunctionDefinedWithNoParametersError, UnmatchedParenthesesError, TrailingLambdaNotParenthesizedError
+from lex import Val, Word, EOF
 from withbounds import WithBounds
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-T = TypeVar("T", bound=syntax.Node)
+T = TypeVar("T", bound=language.Expr)
 U = TypeVar("U", int, float, bool)
-S = TypeVar("S", bound=str)
+S = TypeVar("S", bound=LiteralString)
 
 
-def info(f):
-    def wrapper(*args, **kwargs):
-        res = f(*args, **kwargs)
-        logger.info(f"{f.__name__}: {res}")
-        return res
-
-    return wrapper
-
-
-def check_linearity(source: str, *names: WithBounds[str]) -> None:
-    table = set()
+def check_linearity(*names: WithBounds[str]) -> None:
+    table: set[str] = set()
     for w in names:
         if w.val != '_':
-            if w.val in table:
-                raise ParseException(source, msg=f"duplicate variable {w.val}", loc=w.bounds[0])
-            table.add(w.val)
+            if w.val not in table:
+                table.add(w.val)
+            else:
+                raise DuplicateVariableError(word=w)
 
 
 class Parser:
-    # TODO: s should be bytes, because tokens loc is counted in bytes (ocamllex does not support unicode)
-    def __init__(self, s: str, tokens: List[Val | Word]):
-        assert len(tokens) > 0
+    def __init__(self, tokens: list[Val | Word | EOF]):
+        assert len(tokens) > 0 and isinstance(tokens[-1], EOF)
         self.tokens = tokens
-        self.s = s
         self.i = 0
+        self.eof = tokens[-1]
 
-    def peek(self, offset: int = 0) -> Val | Word | EOF:
+    def peek(self, offset: int = 0):
         assert offset >= 0
         try:
             return self.tokens[self.i + offset]
         except IndexError:
-            last = self.tokens[-1]
-            return EOF(last.loc + len(last.text))
+            return self.eof
 
     def consume(self, n: int = 1):
         assert n >= 1
@@ -57,137 +45,175 @@ class Parser:
             self.i = len(self.tokens)
 
     def match(self, what: str) -> None:
-        """:raises ParseException: if the next token does not match `what`"""
+        """:raises UnexpectedTokenError: if the current token does not match `what`"""
         if not self.peek().match(what):
-            raise ParseException(self.s, self.peek().loc, f"expected '{what}'")
+            raise UnexpectedTokenError(expected=what, bounds=self.peek().bounds)
         self.consume()
 
     def match_with_bounds(self, what: S) -> WithBounds[S]:
         """:raises ParseException: if the current token does not match `what`"""
         if not self.peek().match(what):
-            raise ParseException(self.s, self.peek().loc, f"expected '{what}'")
+            raise UnexpectedTokenError(expected=what, bounds=self.peek().bounds)
         bounds = self.peek().bounds
         self.consume()
-        return WithBounds(what, bounds)
+        return WithBounds[S](what, bounds)
 
-    def parse_ident(self, capitalized: bool = False, allow_underscore=False) -> WithBounds[str]:
-        """:raises ParseException: if the current token is not an identifier"""
+    def parse_ident(self, capitalized: bool = False, allow_underscore: bool = False) -> WithBounds[str]:
+        """
+        :raises ExpectLowercaseIdentifierError
+        :raises ExpectUppercaseIdentifierError
+        :raises WildcardNotAllowedError
+        """
+        b = self.peek().bounds
         try:
-            loc, ident = self.peek().loc, self.peek().get_ident(capitalized)
+            ident = self.peek().get_ident(capitalized)
             if ident == '_' and not allow_underscore:
-                raise ParseException(self.s, loc, "wildcard '_' is not allowed here")
+                raise WildcardNotAllowedError(bounds=b)
             self.consume()
-            return WithBounds(ident, (loc, loc + len(ident)))
+            return WithBounds(ident, b)
         except ValueError:
-            raise ParseException(self.s, self.peek().loc, "expected identifier")
+            if capitalized:
+                raise ExpectUppercaseIdentifierError(bounds=b)
+            raise ExpectLowercaseIdentifierError(bounds=b)
 
-    @overload
-    def match_val(self, ty: Type[int]) -> WithBounds[int]:
-        ...
-
-    @overload
-    def match_val(self, ty: Type[float]) -> WithBounds[float]:
-        ...
-
-    @overload
-    def match_val(self, ty: Type[bool]) -> WithBounds[bool]:
-        ...
-
-    def match_val(self, ty):
+    def match_val(self, ty: Type[U]) -> WithBounds[U]:
+        b = self.peek().bounds
         try:
-            res = WithBounds(self.peek().get_val(ty), self.peek().bounds)
+            res = WithBounds(self.peek().get_val(ty), b)
             self.consume()
             return res
         except ValueError:
-            raise ParseException(self.s, self.peek().loc, f"expected '{ty.__name__}'")
+            raise UnexpectedTokenError(expected=ty.__name__, bounds=b)
 
-    def parse_parens(self, allow_unit: bool = False):
-        lparen = self.match_with_bounds('(').bounds[0]
+    def parse_toplevel(self):
+        decl_or_exprs: list[language.Decl | language.DeclRec] = []
+        while not isinstance(self.peek(), EOF):
+            decl_or_exprs.append(self.parse_expr(on_toplevel=True))
+            if self.peek().match(';;'):
+                self.consume()
+        return language.TopLevel(*decl_or_exprs)
+
+    def parse_parens(self, allow_unit: bool = False) -> language.Expr:
+        b = self.match_with_bounds('(').bounds
         match self.peek():
             case Word(')') as r if allow_unit:
                 self.consume()
-                return syntax.Lit(WithBounds(cast("Literal['()']", '()'), (lparen, r.bounds[1])))
+                b |= r.bounds
+                return language.Lit(WithBounds[Literal['()']]('()', b))
             case _:
                 e = self.parse_expr()
                 self.match(')')
                 return e
 
-    def parse_let(self):
-        let = self.match_with_bounds(cast("Literal['let']", 'let'))
+    @overload
+    def parse_let(self, on_toplevel: Literal[False] = False) -> language.Let | language.LetRec | language.LetTuple:
+        ...
+
+    @overload
+    def parse_let(self, on_toplevel: Literal[True]) -> language.Decl | language.DeclRec:
+        ...
+
+    def parse_let(self, on_toplevel: Literal[True, False] = False):
+        let = self.match_with_bounds('let')
         match self.peek():
             case Word('rec'):
-                rec = self.match_with_bounds(cast("Literal['rec']", 'rec'))
+                rec = self.match_with_bounds('rec')
                 func = self.parse_ident()
                 if func.val == '_':
-                    raise ParseException(self.s, func.bounds[0], "function name cannot be '_'")
-                args = []
+                    raise WildcardCannotBeFunctionNameError(bounds=func.bounds)
+                args: list[WithBounds[str]] = []
                 while True:
                     try:
                         arg = self.parse_ident(allow_underscore=True)
                         args.append(arg)
-                    except ParseException:
+                    except ExpectLowercaseIdentifierError:
                         break
-                if len(args) < 1:
-                    raise ParseException(self.s, self.peek().loc, "function must have at least 1 argument")
-                assert len(args) > 0
-                check_linearity(self.s, *args)
+                if len(args) == 0:
+                    raise FunctionDefinedWithNoParametersError(bounds=func.bounds)
+                check_linearity(*args)
                 self.match('=')
                 e1 = self.parse_expr()
+                function = language.Function(let, rec, func, args, e1)
+                if on_toplevel:
+                    match self.peek():
+                        case Word(';;' | 'let') | EOF():
+                            return language.DeclRec(function)
+                        case _:
+                            ...
+
                 self.match('in')
                 e2 = self.parse_expr()
-                function = syntax.Function(let, rec, func, args, e1)
-                return syntax.LetRec(function, e2)
+
+                return language.LetRec(function, e2)
             case Word('('):
                 self.consume()
                 args = []
                 while True:
                     try:
                         args.append(self.parse_ident(allow_underscore=True))
-                    except ParseException:
-                        raise ParseException(self.s, self.peek().loc, "expected identifier or '_'")
+                    except ExpectLowercaseIdentifierError:
+                        raise UnexpectedTokenError(expected=['lowercase identifier', '_'], bounds=self.peek().bounds)
                     match self.peek():
                         case Word(','):
                             self.consume()
                         case Word(')'):
                             break
                         case _:
-                            raise ParseException(self.s, self.peek().loc, "expected ',' or ')'")
+                            raise UnexpectedTokenError(expected=[',', ')'], bounds=self.peek().bounds)
 
                 assert len(args) >= 2
-                check_linearity(self.s, *args)
+                check_linearity(*args)
                 self.match(')')
                 self.match('=')
                 e1 = self.parse_expr()
                 self.match('in')
                 e2 = self.parse_expr()
-                return syntax.LetTuple(let, args, e1, e2)
+                return language.LetTuple(let, args, e1, e2)
             case Word(_):
                 var = self.parse_ident(allow_underscore=True)
                 self.match('=')
                 e1 = self.parse_expr()
+                let_binding = language.LetBinding(let, var, e1)
+                if on_toplevel:
+                    match self.peek():
+                        case Word(';;' | 'let') | EOF():
+                            return language.Decl(let_binding)
+                        case _:
+                            ...
                 self.match('in')
                 e2 = self.parse_expr()
-                return syntax.Let(let, var, e1, e2)
+                return language.Let(let_binding, e2)
             case _:
-                raise ParseException(self.s, self.peek().loc, "expected 'rec', '(' or identifier")
+                raise UnexpectedTokenError(expected=['rec', '(', 'identifier'], bounds=self.peek().bounds)
 
-    def parse_expr(self):
+    @overload
+    def parse_expr(self, on_toplevel: Literal[False] = False) -> language.Expr:
+        ...
+
+    @overload
+    def parse_expr(self, on_toplevel: Literal[True]) -> language.Decl | language.DeclRec:
+        ...
+
+    def parse_expr(self, on_toplevel: Literal[True, False] = False):
         match self.peek():
             case Word('let'):
-                return self.parse_let()
+                if on_toplevel:
+                    return self.parse_let(on_toplevel)
+                else:
+                    return self.parse_let(on_toplevel)
             case Word('fun'):
                 raise NotImplementedError()
             case _:
                 return self.parse_semi()
 
-    def parse_semi(self) -> syntax.If | syntax.Put | syntax.Semi:
-        es = []
+    def parse_semi(self) -> language.Expr:
+        es: list[language.Expr] = []
         if self.peek().match('if'):
             es.append(self.parse_if())
         else:
             es.append(self.parse_put())
         while self.peek().match(';'):
-            semi = self.match_with_bounds(cast("Literal[';']", ';'))
+            _semi = self.match_with_bounds(';')
             # es.append(semi)
             match self.peek():
                 case Word('let'):
@@ -199,19 +225,19 @@ class Parser:
                 case _:
                     es.append(self.parse_put())
         if len(es) == 1:
-            assert isinstance(es[0], syntax.Node)
+            assert isinstance(es[0], language.Expr)
             return es[0]
         else:
-            return syntax.Semi(tuple(es))
+            return language.Semi(tuple(es))
 
-    def parse_if(self):
-        if_tok = self.match_with_bounds(cast("Literal['if']", 'if'))
+    def parse_if(self) -> language.If:
+        if_tok = self.match_with_bounds('if')
         e1 = self.parse_expr()
         self.match('then')
         e2 = self.parse_expr()
         self.match('else')
         e3 = self.parse_let_fun_if_or(lambda: self.parse_put())
-        return syntax.If(if_tok, e1, e2, e3)
+        return language.If(if_tok, e1, e2, e3)
 
     def skip_parens(self, n0: int = 0) -> int:
         """
@@ -234,7 +260,9 @@ class Parser:
                 case Word(')'):
                     i -= 1
                 case EOF():
-                    raise ParseException(self.s, self.peek(n0).loc, "unmatched '('")
+                    raise UnmatchedParenthesesError(bounds=self.peek(n0).bounds)
+                case _:
+                    ...
             n += 1
         return n
 
@@ -243,7 +271,7 @@ class Parser:
             raise NotImplementedError()
         return None
 
-    def parse_put(self, garanteed: int | None = None):
+    def parse_put(self, guaranteed: int | None = None) -> language.Expr:
         def is_put_lhs() -> int | None:
             if self.peek().match('('):
                 n = self.skip_parens()
@@ -259,11 +287,14 @@ class Parser:
                 return None
             return tot if self.peek(n).match('<-') else None
 
-        if (tot := garanteed or is_put_lhs()) is not None:
-            lhs = self.parse_parens() if self.peek().match('(') else syntax.Var(self.parse_ident())
+        if (tot := guaranteed or is_put_lhs()) is not None:
+            lhs = self.parse_parens() if self.peek().match('(') else language.Var(self.parse_ident())
             for _ in range(tot - 1):
                 self.match('.')
-                lhs = syntax.Get(lhs, self.parse_parens())
+                lparen = self.match_with_bounds('(')
+                e = self.parse_expr()
+                rparen = self.match_with_bounds(')')
+                lhs = language.Get(lhs, lparen, e, rparen)
             self.match('.')
             idx = self.parse_parens()
             self.match('<-')
@@ -278,7 +309,7 @@ class Parser:
                     rhs = self.parse_put(tot)
                 case _:
                     rhs = self.parse_tuple()
-            return syntax.Put(lhs, idx, rhs)
+            return language.Put(lhs, idx, rhs)
         else:
             return self.parse_tuple()
 
@@ -296,7 +327,7 @@ class Parser:
                 case Word(_) as w if w.is_ident():
                     return self.parse_cmp()
                 case _:
-                    raise ParseException(self.s, self.peek().loc, "expected expression")
+                    raise UnexpectedTokenError(expected="expression", bounds=self.peek().bounds)
 
         es = [self.parse_cmp()]
         if not self.peek().match(','):
@@ -310,25 +341,24 @@ class Parser:
                     case Word(')'):
                         break
                     case _:
-                        raise ParseException(self.s, self.peek().loc, "expected ',' or ')'")
-            except ParseException:
+                        raise UnexpectedTokenError(expected=[',', ')'], bounds=self.peek().bounds)
+            except UnexpectedTokenError:
                 break
         assert len(es) >= 2
-        return syntax.Tuple(tuple(es))
+        return language.Tuple(tuple(es))
 
-    def parse_cmp(self):
+    def parse_cmp(self) -> language.Expr:
         e1 = self.parse_addsub()
         while True:
             match self.peek():
                 case Word('<' | '<=' | '>' | '>=' | '=' | '<>' as op):
-                    assert op in ('<', '<=', '>', '>=', '=', '<>')
-                    op = self.match_with_bounds(cast("Literal['<', '<=', '>', '>=', '=', '<>']", op))
+                    op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_addsub)
-                    e1 = syntax.Binary(op, e1, e2)
+                    e1 = language.Binary(op, e1, e2)
                 case _:
                     return e1
 
-    def parse_let_fun_if_or(self, f: Callable[[], T]):
+    def parse_let_fun_if_or(self, f: Callable[[], T]) -> language.Expr:
         match self.peek():
             case Word('let'):
                 return self.parse_let()
@@ -346,7 +376,7 @@ class Parser:
                 case Word('+' | '-' | '+.' | '-.' as op):
                     op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_muldiv)
-                    e1 = syntax.Binary(op, e1, e2)
+                    e1 = language.Binary(op, e1, e2)
                 case _:
                     return e1
 
@@ -354,10 +384,10 @@ class Parser:
         e1 = self.parse_unary()
         while True:
             match self.peek():
-                case Word('*.' | '/.' as op):
+                case Word('*' | '/' | '*.' | '/.' as op):
                     op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_unary)
-                    e1 = syntax.Binary(op, e1, e2)
+                    e1 = language.Binary(op, e1, e2)
                 case _:
                     return e1
 
@@ -367,7 +397,7 @@ class Parser:
                 assert op in ('-', '-.')
                 op = self.match_with_bounds(op)
                 e = self.parse_let_fun_if_or(self.parse_unary)
-                return syntax.Unary(op, e)
+                return language.Unary(op, e)
             case Word('+'):
                 self.consume()
                 return self.parse_let_fun_if_or(self.parse_unary)
@@ -382,27 +412,30 @@ class Parser:
                 while isinstance(self.peek(), Val) or self.peek().is_ident() or self.peek().match('('):
                     args.append(self.parse_get())
                 match self.peek():
-                    case Word('let' | 'if' | '_' | '<-' | 'rec' | '.'):
-                        raise ParseException(self.s, self.peek().loc, "unexpected token")
+                    case Word('if' | '_' | '<-' | 'rec' | '.'):
+                        raise UnexpectedTokenError(expected=[], bounds=self.peek().bounds)
                     case Word('fun'):
-                        raise ParseException(self.s, self.peek().loc, "trailing lambda must be parenthesized")
-                e = syntax.App(e, *args)
+                        raise TrailingLambdaNotParenthesizedError(bounds=self.peek().bounds)
+                    case _:
+                        ...
+                e = language.App(e, *args)
             else:
                 return e
 
-    def parse_get(self):
+    def parse_get(self) -> language.Get | language.Expr:
         """parse a get expression, e.g. `a.(b)` or `a.(b).(c)`"""
         e = self.parse_atomic()
         while True:
             match self.peek():
                 case Word('.'):
                     self.consume()
-                    idx = self.parse_parens()
-                    e = syntax.Get(e, idx)
+                    lparen = self.match_with_bounds('(')
+                    idx = self.parse_expr()
+                    rparen = self.match_with_bounds(')')
+                    e = language.Get(e, lparen, idx, rparen)
                 case _:
                     return e
 
-    # @info
     def parse_atomic(self):
         match self.peek():
             case Word('('):
@@ -414,7 +447,7 @@ class Parser:
             case Word('if'):
                 return self.parse_if()
             case Word(_) as w if w.is_ident():
-                return syntax.Var(self.parse_ident())
+                return language.Var(self.parse_ident())
             case Word(_) as w if w.is_ident(capitalized=True):
                 path = [self.parse_ident(capitalized=True)]
                 self.match('.')
@@ -424,16 +457,16 @@ class Parser:
                         self.consume()
                     else:
                         break
-                try:
-                    path.append(self.parse_ident())
-                    return \
-                        syntax.Var(WithBounds('.'.join(w.val for w in path), (path[0].bounds[0], path[-1].bounds[1])))
-                except ParseException:
-                    raise ParseException(self.s, self.peek().loc, "expected a lowercase identifier")
+                path.append(self.parse_ident())
+                b = path[0].bounds
+                for i in range(1, len(path)):
+                    b |= path[i].bounds
+                return \
+                    language.Var(WithBounds('.'.join(w.val for w in path), b))
+
             case Val(int() | float() | bool() as x):
-                return syntax.Lit(self.match_val(x.__class__))
+                return language.Lit(self.match_val(x.__class__))
             case Val(_):
                 raise NotImplementedError()
             case _:
-                raise ParseException(self.s, self.peek().loc, "expected atomic expression")
-
+                raise UnexpectedTokenError(expected="atomic expression", bounds=self.peek().bounds)

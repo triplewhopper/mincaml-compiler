@@ -1,45 +1,55 @@
-from typing import TypeVar, Generic, Tuple
-from pyparsing import lineno, col
+from typing import TypeVar, Generic, TypeGuard, Literal, TypeAlias
+from bounds import Bounds, HasBounds
 
-T = TypeVar("T")
+T = TypeVar("T", covariant=True)
 
 
-class WithBounds(Generic[T]):
-    __slots__ = ["_val", "_bounds"]
+class WithBounds(Generic[T], HasBounds):
+    __slots__ = 'val',
 
-    def __init__(self, val: T, bounds: Tuple[int, int]):
-        self._val = val
-        self._bounds = bounds
+    def __init__(self, val: T, bounds: Bounds):
+        super(WithBounds, self).__init__(bounds)
+        self.val = val
 
-    @property
-    def val(self) -> T:
-        return self._val
-
-    @property
-    def bounds(self) -> Tuple[int, int]:
-        return self._bounds
-
-    def lineno(self, s: bytes) -> int | Tuple[int, int]:
-        p = s.count(b'\n', 0, self._bounds[0]) + 1
-        q = s.count(b'\n', 0, self._bounds[1]) + 1
-        return p if p == q else (p, q)
-
-    def col(self, s: bytes) -> int | Tuple[int, int]:
-        p = [1 if 0 < loc < len(s) and s[loc - 1] == b'\n' else loc - s.rfind(b'\n', 0, loc) for loc in self._bounds]
-        return p[0] if p[0] == p[1] else p
+    def __eq__(self, other: object, /):
+        if isinstance(other, WithBounds):
+            return self.bounds == other.bounds and other._val_eq(self.val)
+        return False
+    
+    def _val_eq(self, other: object, /):
+        return self.val == other
 
     def __hash__(self):
-        return hash((self._val, self._bounds))
-
-    def __eq__(self, other):
-        if not isinstance(other, WithBounds):
-            return NotImplemented
-        return self._val == other._val and self._bounds == other._bounds
+        return hash((WithBounds[T], self.val, self.bounds))
 
     def __repr__(self):
-        return f"WithBounds({self._val!r}, {self._bounds!r})"
+        return f"<wb[{self.val.__class__.__name__}] {self.val!r}@{self.bounds!r}>"
 
 
-def merge(b1: tuple[int, int], *bs: tuple[int, int]) -> tuple[int, int]:
-    return min(b1[0], *map(lambda x: x[0], bs)), \
-           max(b1[1], *map(lambda x: x[1], bs))
+X = TypeVar("X", bool, int, float, Literal["()"])
+
+WithBoundsLit: TypeAlias = WithBounds[X]
+
+
+def is_withboundslit(x:object) -> TypeGuard[WithBounds[X]]:
+    match x:
+        case WithBounds(val=int()|float()|bool()|'()'):
+            return True
+        case _:
+            return False
+
+
+def is_disjoint_increasing(*args: Bounds) -> bool:
+    i = iter(args)
+    try:
+        x = next(i)
+    except StopIteration:
+        return True
+    while True:
+        try:
+            y = next(i)
+            if not (x < y):
+                return False
+            x = y
+        except StopIteration:
+            return True

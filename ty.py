@@ -1,122 +1,118 @@
-from typing import Iterable, Tuple, Dict
+from collections.abc import Iterable
 from abc import ABC, abstractmethod
-from functools import lru_cache
+from typing import TypeVar, Generic
 
 
 class Ty(ABC):
 
     @abstractmethod
-    def __hash__(self):
+    def __hash__(self) -> int:
         ...
 
     @abstractmethod
-    def __eq__(self, other: 'Ty'):
+    def __eq__(self, other: object) -> bool:
         ...
 
     @abstractmethod
-    def __repr__(self):
+    def __repr__(self) -> str:
         ...
 
     @abstractmethod
-    def __str__(self):
+    def __str__(self) -> str:
         ...
 
 
 class TyUnit(Ty):
     _instance = None
-    __slots__ = []
+    __slots__ = ()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         # Singleton
         if cls._instance is None:
-            cls._instance = super(TyUnit, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(TyUnit, cls).__new__(cls)
         return cls._instance
 
     def __hash__(self):
         return hash((TyUnit, ()))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyUnit):
-            return NotImplemented
-        if self is other:
-            return True
-        return isinstance(other, TyUnit)
+    def __eq__(self, other: object):
+        return other is self
 
-    __str__ = __repr__ = lambda self: "unit"
+    def __str__(self):
+        return "unit"
+
+    __repr__ = __str__
 
 
 class TyBool(Ty):
     _instance = None
-    __slots__ = []
+    __slots__ = ()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         # Singleton
         if cls._instance is None:
-            cls._instance = super(TyBool, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(TyBool, cls).__new__(cls)
         return cls._instance
 
     def __hash__(self):
         return hash((TyBool, ()))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyBool):
-            return NotImplemented
-        if self is other:
-            return True
-        return isinstance(other, TyBool)
+    def __eq__(self, other: object):
+        return other is self
 
-    __str__ = __repr__ = lambda self: "bool"
+    def __str__(self):
+        return "bool"
+
+    __repr__ = __str__
 
 
 class TyInt(Ty):
     _instance = None
-    __slots__ = []
+    __slots__ = ()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         # Singleton
         if cls._instance is None:
-            cls._instance = super(TyInt, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(TyInt, cls).__new__(cls)
         return cls._instance
 
     def __hash__(self):
         return hash((TyInt, ()))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyInt):
-            return NotImplemented
-        if self is other:
-            return True
-        return isinstance(other, TyInt)
+    def __eq__(self, other: object):
+        return other is self
 
-    __str__ = __repr__ = lambda self: "int"
+    def __str__(self):
+        return "int"
+
+    __repr__ = __str__
 
 
 class TyFloat(Ty):
     _instance = None
-    __slots__ = []
+    __slots__ = ()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         # Singleton
         if cls._instance is None:
-            cls._instance = super(TyFloat, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(TyFloat, cls).__new__(cls)
         return cls._instance
 
     def __hash__(self):
         return hash((TyFloat, ()))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyFloat):
-            return NotImplemented
-        if self is other:
-            return True
-        return isinstance(other, TyFloat)
+    def __eq__(self, other: object):
+        return other is self
 
-    __str__ = __repr__ = lambda self: "float"
+    def __str__(self):
+        return "float"
+
+    __repr__ = __str__
 
 
 class TyTuple(Ty):
-    __slots__ = ['_elems']
-    __match_args__ = ('elems',)
+    __slots__ = '_elems',
+    __match_args__ = 'elems',
 
     def __init__(self, elems: Iterable[Ty]):
         self._elems = tuple(elems)
@@ -124,17 +120,13 @@ class TyTuple(Ty):
         assert all(isinstance(e, Ty) for e in self._elems)
 
     @property
-    def elems(self) -> Tuple[Ty, ...]:
+    def elems(self) -> tuple[Ty, ...]:
         return self._elems
 
     def __hash__(self):
         return hash((TyTuple, self._elems))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyTuple):
-            return NotImplemented
-        if self is other:
-            return True
+    def __eq__(self, other: object):
         return isinstance(other, TyTuple) and self._elems == other._elems
 
     def __repr__(self):
@@ -144,8 +136,8 @@ class TyTuple(Ty):
 
 
 class TyArray(Ty):
-    __slots__ = ['_elem']
-    __match_args__ = ('elem',)
+    __slots__ = '_elem',
+    __match_args__ = 'elem',
 
     def __init__(self, elem: Ty):
         self._elem = elem
@@ -157,11 +149,7 @@ class TyArray(Ty):
     def __hash__(self):
         return hash((TyArray, self._elem))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyArray):
-            return NotImplemented
-        if self is other:
-            return True
+    def __eq__(self, other: object):
         return isinstance(other, TyArray) and self._elem == other._elem
 
     def __repr__(self):
@@ -173,26 +161,18 @@ class TyArray(Ty):
 
 
 class TyFun(Ty):
-    __slots__ = ['_args', '_ret']
-    __match_args__ = ('args', 'ret')
+    __slots__ = '_args', '_ret'
+    __match_args__ = 'args', 'ret'
 
     def __init__(self, *args: Ty):
         assert len(args) >= 2
         assert all(isinstance(e, Ty) for e in args)
-        self._args: Tuple[Ty, ...] = args[:-1]
+        self._args: tuple[Ty, ...] = args[:-1]
         self._ret = args[-1]
 
     @property
-    def args(self) -> Tuple[Ty, ...]:
+    def args(self) -> tuple[Ty, ...]:
         return self._args
-
-    @property
-    def n_non_void_args(self) -> int:
-        ans = 0
-        for arg in self._args:
-            if arg is not TyUnit():
-                ans += 1
-        return ans
 
     @property
     def ret(self) -> Ty:
@@ -201,15 +181,11 @@ class TyFun(Ty):
     def __hash__(self):
         return hash((TyFun, self._args, self._ret))
 
-    def __eq__(self, other: Ty):
-        if not isinstance(other, TyFun):
-            return NotImplemented
-        if self is other:
-            return True
+    def __eq__(self, other: object):
         return isinstance(other, TyFun) and self._args == other._args and self._ret == other._ret
 
     def __repr__(self):
-        s = []
+        s: list[str] = []
         for arg in self._args:
             if isinstance(arg, TyFun):
                 s.append(f"({arg})")
@@ -233,3 +209,14 @@ def ty_tuple(ts: Iterable[Ty]) -> Ty:
 
 def ty_fun(*ts: Ty) -> Ty:
     return TyFun(*ts)
+
+
+T = TypeVar("T", bound=Ty, covariant=True)
+
+
+class HasTypMixin(Generic[T]):
+    __slots__ = ()
+
+    def __init__(self, typ: T):
+        assert isinstance(typ, Ty)
+        self.typ = typ
