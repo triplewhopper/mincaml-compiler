@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from abc import ABC, abstractmethod
 from typing import TypeVar, Generic
 
+U = TypeVar("U", 'TyInt', 'TyFloat', 'TyBool', 'TyUnit', 'TyTuple', 'TyArray', 'TyFun')
 
 class Ty(ABC):
 
@@ -20,6 +21,11 @@ class Ty(ABC):
     @abstractmethod
     def __str__(self) -> str:
         ...
+
+    def as_(self, ty: type[U]) -> U:
+        if isinstance(self, ty):
+            return self
+        raise TypeError(f"Expected {ty.__name__}, got {type(self).__name__}")
 
 
 class TyUnit(Ty):

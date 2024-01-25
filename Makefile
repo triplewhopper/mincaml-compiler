@@ -35,6 +35,10 @@ minrt:
 launch:
 	docker run --rm -v "$(DIR)/samples":/usr/src/ -w /usr/src/ -it $(DOCKER_IMAGE) bash
 
+test-cls-check:
+	for f in test/*.ml; do if ! $(PY) main.py $$f; then break; fi; done; \
+	$(PY) main.py test/minrt/globals2.ml test/minrt/minrt.ml; \
+	rm -f test/*.knormal.ml test/*.ml.lex
 
 .SILENT: sim
 sim:

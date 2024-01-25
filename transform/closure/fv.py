@@ -1,18 +1,17 @@
-from typing import Callable, Self
-from collections.abc import Iterable
-from .visitor import ExpVisitor
-from .language import Exp, Var, AppDir, Seq, Let, LetBinding, LetTuple, MakeCls, Cls, AppCls, Binary, Unary, If, Put, Tuple, Get, Lit, Ext
-from id import LocalId, Id
+# from .visitor import ExpVisitor
+from .language import Exp, Var, AppDir, Seq, Let, LetBinding, LetTuple, MakeCls, Cls, AppCls, Binary, Unary, If, Put, Tuple, Get, Lit
+from id import Id
+from ty import Ty
 
 
 class Fv:
 
     def __init__(self):
-        self.__fv: set[LocalId] = set()
+        self.__fv: set[Id] = set()
 
     @property
-    def fv(self) -> frozenset[LocalId]:
-        assert all(isinstance(x, LocalId) for x in self.__fv)
+    def fv(self) -> frozenset[Id]:
+        assert all(isinstance(x, Id) for x in self.__fv)
         return frozenset(self.__fv)
 
     # def __do_nothing(self, node: Exp) -> None:
@@ -40,19 +39,18 @@ class Fv:
 
     #     return f
     
-    def visit(self, node: Exp | Cls | LetBinding) -> None:
+    def visit(self, node: Exp[Ty] | Cls | LetBinding) -> None:
         def acc_fvs(*xs: Id):
-            self.__fv.update(x for x in xs if isinstance(x, LocalId))
+            self.__fv.update(xs)
         match node:
-            case Lit() | Ext():
+            case Lit():
                 ...
             case Var(name):
                 self.__fv.add(name)
             case Get(array, index):
                 acc_fvs(array, index)
             case Unary(_, y):
-                if isinstance(y, LocalId):
-                    self.__fv.add(y)
+                self.__fv.add(y)
             case AppCls(callee, args):
                 acc_fvs(callee, *args)
             case AppDir(args=args):
@@ -66,7 +64,7 @@ class Fv:
             case Put(array, index, value):
                 acc_fvs(array, index, value)
             case If(cond, br_true, br_false):
-                if isinstance(cond, LocalId): self.__fv.add(cond)
+                self.__fv.add(cond)
                 self.visit(br_true)
                 self.visit(br_false)
             case Let(binding, expr):
@@ -76,7 +74,7 @@ class Fv:
             case LetTuple(xs=xs, y=y, e=e):
                 self.visit(e)
                 self.__fv.difference_update(xs)
-                if isinstance(y, LocalId): self.__fv.add(y)
+                self.__fv.add(y)
             case MakeCls(closure=closure, body=body):
                 self.visit(body)
                 self.__fv.update(closure.actual_fv)

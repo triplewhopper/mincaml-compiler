@@ -1,11 +1,12 @@
-from typing import Literal, overload, TypeVar, Generic
+from typing import overload, TypeVar
 
-from opkinds import literal_unary, literal_binary, BinaryOpKind, UnaryOpKind
-# from id import LocalId, GlobalId, Id, TmpId
+from opkinds import literal_unary, BinaryOpKind, UnaryOpKind
+# from id import LocalId, GloxbalId, Id, TmpId
 from id import Id
-from ty import Ty, TyTuple, TyFun, TyArray, TyBool, TyInt, TyFloat, TyUnit, HasTypMixin as _HasTyp, T
+from ty import Ty, TyTuple, TyFun, TyBool, TyInt, TyFloat, TyUnit, HasTypMixin as _HasTyp, T
 from withbounds import WithBounds as WBs
-from bounds import Bounds, HasBounds, merge_bounds
+from bounds import Bounds, HasBounds
+from metadata import DILocation
 
 
 # class KNormal(HasBounds, _HasTyp[T]):
@@ -14,40 +15,70 @@ from bounds import Bounds, HasBounds, merge_bounds
 #     def __init__(self, bounds: Bounds, typ: T):
 #         HasBounds.__init__(self, bounds)
 #         _HasTyp[T].__init__(self, typ)
+
 class KNormal(_HasTyp[T]):
-    __slots__ = 'typ'
+    __slots__ = 'typ',
 
     def __init__(self, typ: T):
-        _HasTyp[T].__init__(self, typ)
+        self.typ = typ
 
-class Lit(KNormal[TyBool | TyInt | TyFloat | TyUnit]):
-    __slots__ = 'lit'
 
-    def __init__(self, lit: WBs[bool | int | float | Literal['()']], /):
-        assert isinstance(lit, WBs)
-        match lit.val:
-            case bool():
-                super(Lit, self).__init__(lit.bounds, TyBool())
-            case int():
-                super(Lit, self).__init__(lit.bounds, TyInt())
-            case float():
-                super(Lit, self).__init__(lit.bounds, TyFloat())
-            case "()":
-                super(Lit, self).__init__(lit.bounds, TyUnit())
-        self.lit = lit
+L = TypeVar('L', TyBool, TyInt, TyFloat, TyUnit)
 
-    @staticmethod
-    def unit_with_bounds(bounds: Bounds):
-        return Lit(WBs('()', bounds))
+
+class Lit(KNormal[L]):
+    __slots__ = 'metadata',
+
+    def __init__(self, metadata: DILocation, typ: L, /):
+        super(Lit, self).__init__(typ)
+        self.metadata = metadata
+
+    # @staticmethod
+    # def unit_with_bounds(bounds: Bounds):
+    #     return Lit(WBs('()', bounds))
+
+
+class LitU(Lit[TyUnit]):
+    __slots__ = ()
+
+    def __init__(self, metadata: DILocation, /):
+        super(LitU, self).__init__(metadata, TyUnit())
 
     def __str__(self):
-        match self.lit.val:
-            case True:
-                return "true"
-            case False:
-                return "false"
-            case _:
-                return str(self.lit.val)
+        return "()"
+
+
+class LitI(Lit[TyInt]):
+    __slots__ = 'lit',
+
+    def __init__(self, metadata: DILocation, lit: int, /):
+        super(LitI, self).__init__(metadata, TyInt())
+        self.lit = lit
+
+    def __str__(self):
+        return str(self.lit)
+
+
+class LitB(Lit[TyBool]):
+    __slots__ = 'lit',
+
+    def __init__(self, metadata: DILocation, lit: bool, /):
+        super(LitB, self).__init__(metadata, TyBool())
+        self.lit = lit
+
+    def __str__(self):
+        return 'true' if self.lit else 'false'
+
+
+class LitF(Lit[TyFloat]):
+    __slots__ = 'lit',
+
+    def __init__(self, metadata: DILocation, lit: float, /):
+        super(LitF, self).__init__(metadata, TyFloat())
+        self.lit = lit
+
+    def __str__(self):
+        return str(self.lit)
 
 
 class Var(KNormal[Ty]):
@@ -60,30 +91,30 @@ class Var(KNormal[Ty]):
     #     self.name = name
     def __init__(self, name: Id, /, *, typ: Ty):
         assert isinstance(name, Id)
-        super(Var, self).__init__(name.bounds, typ)
+        super(Var, self).__init__(typ)
         self.name = name
 
     def __str__(self):
-        return self.name.val.val
+        return str(self.name)
 
 
-class Ext(KNormal[TyArray | TyFun | TyTuple]):
-    __slots__ = 'name'
+# class Ext(KNormal[TyArray | TyFun | TyTuple]):
+#     __slots__ = 'name'
 
-    def __init__(self, name: GlobalId, /, *, typ: TyArray | TyFun | TyTuple):
-        assert isinstance(name, GlobalId) and isinstance(typ, (TyArray, TyFun, TyTuple))
-        super(Ext, self).__init__(name.bounds, typ)
-        self.name = name
+#     def __init__(self, name: GlobalId, /, *, typ: TyArray | TyFun | TyTuple):
+#         assert isinstance(name, GlobalId) and isinstance(typ, (TyArray, TyFun, TyTuple))
+#         super(Ext, self).__init__(name.bounds, typ)
+#         self.name = name
 
-    def __str__(self):
-        return self.name.__str__()
+#     def __str__(self):
+#         return self.name.__str__()
 
 
 class Get(KNormal[Ty]):
-    __slots__ = 'array', 'index'
+    __slots__ = 'array', 'index', 'metadatas'
 
-    def __init__(self, arr: Id, idx: Id, /, *, typ: Ty, bounds: Bounds):
-        super(Get, self).__init__(bounds, typ)
+    def __init__(self, arr: Id, idx: Id, /, *, typ: Ty):
+        super(Get, self).__init__(typ)
         assert isinstance(arr, Id) and isinstance(idx, Id)
         self.array = arr
         self.index = idx
@@ -93,7 +124,7 @@ class Get(KNormal[Ty]):
 
 
 class Unary(KNormal[Ty]):
-    __slots__ = 'op', 'y'
+    __slots__ = 'op', 'y', 'metadata'
 
     @staticmethod
     @overload
@@ -120,24 +151,24 @@ class Unary(KNormal[Ty]):
             return WBs(resolve(op.val, typ), op.bounds)
         return resolve(op, typ)
 
-    def __init__(self, op: WBs[UnaryOpKind], y: Id, /, *, bounds: Bounds):
-        assert isinstance(y, Id)
-        assert isinstance(op, WBs) and isinstance(op.val, UnaryOpKind)
-        super(Unary, self).__init__(bounds, op.val.typ.ret)
+    def __init__(self, op: UnaryOpKind, y: Id, *, metadata: DILocation):
+        assert isinstance(y, Id) and isinstance(op, UnaryOpKind)
+        super(Unary, self).__init__(op.typ.ret)
         self.op = op
         self.y = y
+        self.metadata = metadata
 
     def __str__(self):
-        return f"({str(self.op.val)} {self.y})"
+        return f"({str(self.op)} {self.y})"
 
 
 class App(KNormal[Ty]):
     __slots__ = 'callee', 'args'
 
-    def __init__(self, f: Id, *args: Id, typ: Ty, bounds: Bounds):
+    def __init__(self, f: Id, *args: Id, typ: Ty):
         assert isinstance(f, Id) and all(isinstance(arg, Id) for arg in args)
         assert len(args) >= 1
-        super(App, self).__init__(bounds, typ)
+        super(App, self).__init__(typ)
         self.callee = f
         self.args = args
 
@@ -146,21 +177,21 @@ class App(KNormal[Ty]):
 
 
 class Binary(KNormal[Ty]):
-    __slots__ = 'op', 'y1', 'y2'
+    __slots__ = 'op', 'y1', 'y2', 'metadata'
 
     @staticmethod
     @overload
-    def resolve_overloading(op: WBs[literal_binary], typ: Ty) -> WBs[BinaryOpKind]:
+    def resolve_overloading(op: WBs[str], typ: Ty) -> WBs[BinaryOpKind]:
         ...
 
     @staticmethod
     @overload
-    def resolve_overloading(op: literal_binary, typ: Ty) -> BinaryOpKind:
+    def resolve_overloading(op: str, typ: Ty) -> BinaryOpKind:
         ...
 
     @staticmethod
-    def resolve_overloading(op: literal_binary | WBs[literal_binary], typ: Ty):
-        def resolve(op: literal_binary, typ: Ty) -> 'BinaryOpKind':
+    def resolve_overloading(op: str | WBs[str], typ: Ty):
+        def resolve(op: str, typ: Ty) -> 'BinaryOpKind':
             match op, typ:
                 case '+', TyInt():
                     return BinaryOpKind.I_ADD
@@ -213,16 +244,17 @@ class Binary(KNormal[Ty]):
             return WBs(resolve(op.val, typ), op.bounds)
         return resolve(op, typ)
 
-    def __init__(self, op: WBs[BinaryOpKind], y1: Id, y2: Id, *, bounds: Bounds):
-        assert isinstance(op, WBs) and isinstance(op.val, BinaryOpKind)
+    def __init__(self, op: BinaryOpKind, y1: Id, y2: Id, *, metadata: DILocation):
+        assert isinstance(op, BinaryOpKind)
         assert isinstance(y1, Id) and isinstance(y2, Id)
-        super(Binary, self).__init__(bounds, op.val.typ.ret)
+        super(Binary, self).__init__(op.typ.ret)
         self.op = op
         self.y1 = y1
         self.y2 = y2
+        self.metadata = metadata
 
     def __str__(self):
-        return f"({self.y1} {str(self.op.val)} {self.y2})"
+        return f"({self.y1} {self.op} {self.y2})"
 
 
 class Seq(KNormal[Ty]):
@@ -232,8 +264,8 @@ class Seq(KNormal[Ty]):
         assert len(es) >= 2
         assert all(isinstance(e, KNormal) for e in es)
         assert all(e.typ is TyUnit() for e in es[:-1])
-        bounds = merge_bounds(*(e.bounds for e in es))
-        super(Seq, self).__init__(bounds, es[-1].typ)
+        # bounds = merge_bounds(*(e.bounds for e in es))
+        super(Seq, self).__init__(es[-1].typ)
         self.es = es
 
     def __str__(self):
@@ -243,11 +275,11 @@ class Seq(KNormal[Ty]):
 class Tuple(KNormal[TyTuple]):
     __slots__ = 'ys',
 
-    def __init__(self, *ys: Id, typ: TyTuple, bounds: Bounds):
+    def __init__(self, *ys: Id, typ: TyTuple):
         """check elems is at least of length 2 at runtime"""
         assert all(isinstance(e, Id) for e in ys)
         assert isinstance(typ, TyTuple) and len(typ.elems) == len(ys)
-        super(Tuple, self).__init__(bounds, typ)
+        super(Tuple, self).__init__(typ)
         self.ys = ys
 
     def __str__(self):
@@ -257,9 +289,9 @@ class Tuple(KNormal[TyTuple]):
 class Put(KNormal[TyUnit]):
     __slots__ = 'array', 'index', 'value'
 
-    def __init__(self, array: Id, index: Id, value: Id, /, *, bounds: Bounds):
+    def __init__(self, array: Id, index: Id, value: Id, /):
         assert isinstance(array, Id) and isinstance(index, Id) and isinstance(value, Id)
-        super(Put, self).__init__(bounds, TyUnit())
+        super(Put, self).__init__(TyUnit())
         self.array, self.index, self.value = array, index, value
 
     def __str__(self):
@@ -269,10 +301,10 @@ class Put(KNormal[TyUnit]):
 class If(KNormal[Ty]):
     __slots__ = 'cond', 'br_true', 'br_false'
 
-    def __init__(self, cond: Id, branch_true: KNormal[Ty], branch_false: KNormal[Ty], /, *, bounds: Bounds):
+    def __init__(self, cond: Id, branch_true: KNormal[Ty], branch_false: KNormal[Ty], /):
         assert isinstance(cond, Id) and isinstance(branch_true, KNormal) and isinstance(branch_false, KNormal)
         assert branch_true.typ == branch_false.typ
-        super(If, self).__init__(bounds, branch_true.typ)
+        super(If, self).__init__(branch_true.typ)
         self.cond = cond
         self.br_true = branch_true
         self.br_false = branch_false
@@ -281,17 +313,18 @@ class If(KNormal[Ty]):
         return f"(if {self.cond} then {self.br_true} else {self.br_false})"
 
 
-class LetBinding(HasBounds):
-    __slots__ = 'lhs', 'rhs'
+class LetBinding:
+    __slots__ = 'lhs', 'rhs', 'is_tmp'
 
-    def __init__(self, lhs: Id, rhs: KNormal[Ty], /, *, bounds: Bounds):
+    def __init__(self, lhs: Id, rhs: KNormal[Ty], /, is_tmp: bool = False):
         assert isinstance(lhs, Id) and isinstance(rhs, KNormal)
-        super(LetBinding, self).__init__(bounds)
+        super(LetBinding, self).__init__()
         self.lhs = lhs
         self.rhs = rhs
+        self.is_tmp = is_tmp
 
     def __str__(self):
-        if self.lhs.is_tmp:
+        if self.is_tmp:
             return f"let {self.lhs}: {self.rhs.typ} = {self.rhs}"
         return f"let {self.lhs} = {self.rhs}"
 
@@ -299,14 +332,14 @@ class LetBinding(HasBounds):
 class Let(KNormal[T]):
     __slots__ = 'binding', 'expr'
 
-    def __init__(self, binding: LetBinding, expr: KNormal[T], /, *, bounds: Bounds):
+    def __init__(self, binding: LetBinding, expr: KNormal[T], /):
         assert isinstance(binding, LetBinding) and isinstance(expr, KNormal)
-        super(Let, self).__init__(bounds, expr.typ)
+        super(Let, self).__init__(expr.typ)
         self.binding = binding
         self.expr = expr
 
     def __str__(self):
-        if self.binding.lhs.is_tmp:
+        if self.binding.is_tmp:
             return f"(let {self.binding.lhs}: {self.binding.rhs.typ} = {self.binding.rhs} in {self.expr})"
         return f"(let {self.binding.lhs} = {self.binding.rhs} in {self.expr})"
 
@@ -314,18 +347,13 @@ class Let(KNormal[T]):
 class LetTuple(KNormal[T]):
     __slots__ = 'xs', 'ts', 'y', 'e'
 
-    def __init__(self, xs: tuple[Id, ...], ts: tuple[Ty, ...], y: Id, e: KNormal[T], /, *, bounds: Bounds):
-        """
-        constraints:
-        if x_i is LocalId, then x_i.is_definition must be True
-        """
+    def __init__(self, xs: tuple[Id, ...], ts: tuple[Ty, ...], y: Id, e: KNormal[T], /):
         assert isinstance(xs, tuple) and len(xs) >= 2
-        assert all(isinstance(x, Id) for x in xs)
-        assert all(isinstance(t, Ty) for t in ts)
+        assert all(isinstance(x, Id) for x in xs) and all(isinstance(t, Ty) for t in ts)
         assert len(xs) == len(ts)
         assert isinstance(y, Id)
         assert isinstance(e, KNormal)
-        super(LetTuple, self).__init__(bounds, e.typ)
+        super(LetTuple, self).__init__(e.typ)
         self.xs = xs
         self.ts = ts
         self.y = y
@@ -334,22 +362,22 @@ class LetTuple(KNormal[T]):
     def update(self, /, *, e: KNormal[T] | None = None):
         if (e or self.e) is self.e:
             return self
-        return LetTuple(self.xs, self.ts, self.y, e or self.e, bounds=self.bounds)
+        return LetTuple(self.xs, self.ts, self.y, e or self.e)
 
     def __str__(self):
         return f"(let ({', '.join(f'({x}: {t})' for x, t in zip(self.xs, self.ts))}) = {self.y} in {self.e})"
 
 
-class Function(HasBounds):
+class Function:
     __slots__ = 'funct', 'formal_args', 'body', 'typ'
 
     def __init__(self, funct: Id, formal_args: tuple[Id, ...], body: KNormal[Ty], /, *,
-                 typ: TyFun, bounds: Bounds):
+                 typ: TyFun):
         assert isinstance(formal_args, tuple) and isinstance(typ, TyFun)
         assert all(isinstance(x, Id) for x in formal_args)
         assert len(formal_args) == len(typ.args)
         assert isinstance(body, KNormal) and body.typ == typ.ret
-        HasBounds.__init__(self, bounds)
+        # HasBounds.__init__(self, bounds)
         self.funct = funct
         self.formal_args = formal_args
         self.body = body
@@ -360,7 +388,7 @@ class Function(HasBounds):
 
     def update(self, /, *, body: KNormal[Ty]):
         if body is self.body: return self
-        return Function(self.funct, self.formal_args, body, typ=self.typ, bounds=self.bounds)
+        return Function(self.funct, self.formal_args, body, typ=self.typ)
 
     def __str__(self):
         args = ' '.join(f"({a}: {t})" for a, t in self.iter_args())
@@ -388,14 +416,14 @@ class Function(HasBounds):
 class LetRec(KNormal[Ty]):
     __slots__ = 'f', 'e'
 
-    def __init__(self, func: Function, expr: KNormal[Ty], /, *, bounds: Bounds):
+    def __init__(self, func: Function, expr: KNormal[Ty], /):
         """
         let rec $name $arg1 ... $argn = $body in $expr
         """
         assert isinstance(func, Function)
         assert isinstance(expr, KNormal)
         assert self is not expr
-        super(LetRec, self).__init__(bounds, expr.typ)
+        super(LetRec, self).__init__(expr.typ)
         self.f = func
         self.e = expr
 
@@ -406,7 +434,7 @@ class LetRec(KNormal[Ty]):
     def update(self, /, *, f: Function | None = None, e: KNormal[Ty] | None = None):
         if (f or self.f) is self.f and (e or self.e) is self.e:
             return self
-        return LetRec(f or self.f, e or self.e, bounds=self.bounds)
+        return LetRec(f or self.f, e or self.e)
 
 
 class Module(HasBounds):

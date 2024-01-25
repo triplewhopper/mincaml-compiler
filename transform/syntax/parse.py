@@ -4,9 +4,14 @@ from typing import Type, TypeVar, overload, Literal, LiteralString
 from . import language
 from .errors import UnexpectedTokenError, DuplicateVariableError, WildcardNotAllowedError, \
     ExpectLowercaseIdentifierError, ExpectUppercaseIdentifierError, WildcardCannotBeFunctionNameError, \
-    FunctionDefinedWithNoParametersError, UnmatchedParenthesesError, TrailingLambdaNotParenthesizedError
+    FunctionDefinedWithNoParametersError, UnmatchedParenthesesError, TrailingLambdaNotParenthesizedError, \
+    UnBoundVariableError
 from lex import Val, Word, EOF
 from withbounds import WithBounds
+from id import Id
+from metadata import DIScope, DILocation, DIVariable
+from collections import ChainMap
+import contextlib
 
 T = TypeVar("T", bound=language.Expr)
 U = TypeVar("U", int, float, bool)
@@ -24,11 +29,23 @@ def check_linearity(*names: WithBounds[str]) -> None:
 
 
 class Parser:
-    def __init__(self, tokens: list[Val | Word | EOF]):
+    def __init__(self, env: dict[str, Id], scope: DIScope, tokens: list[Val | Word | EOF]):
         assert len(tokens) > 0 and isinstance(tokens[-1], EOF)
         self.tokens = tokens
         self.i = 0
         self.eof = tokens[-1]
+        self.env = ChainMap(env)
+        self.scope = scope
+
+    @contextlib.contextmanager
+    def new_child_env(self, env: dict[str, Id] | None = None):
+        self.env = self.env.new_child(env)
+        scope, self.scope = self.scope, DIScope(self.scope)
+        try:
+            yield self.scope
+        finally:
+            self.env = self.env.parents
+            self.scope = scope
 
     def peek(self, offset: int = 0):
         assert offset >= 0
@@ -36,6 +53,12 @@ class Parser:
             return self.tokens[self.i + offset]
         except IndexError:
             return self.eof
+
+    def di_var(self, tok: WithBounds[str]):
+        return DIVariable.from_wbs(self.scope, tok)
+
+    def var_of_new_id(self, tok: WithBounds[str]):
+        return language.Var(Id(), self.di_var(tok))
 
     def consume(self, n: int = 1):
         assert n >= 1
@@ -86,12 +109,18 @@ class Parser:
             raise UnexpectedTokenError(expected=ty.__name__, bounds=b)
 
     def parse_toplevel(self):
-        decl_or_exprs: list[language.Decl | language.DeclRec] = []
+        decl_or_exprs: list[language.Decl | language.DeclRec | language.Expr] = []
         while not isinstance(self.peek(), EOF):
-            decl_or_exprs.append(self.parse_expr(on_toplevel=True))
+            decl_or_exprs.append(d := self.parse_expr(on_toplevel=True))
             if self.peek().match(';;'):
                 self.consume()
-        return language.TopLevel(*decl_or_exprs)
+            if isinstance(d, language.Decl):
+                self.env[d.binding.var.metadata.name] = d.binding.var.name
+
+            elif isinstance(d, language.DeclRec):
+                self.env[d.f.funct.metadata.name] = d.f.funct.name
+
+        return language.TopLevel(tuple(decl_or_exprs))
 
     def parse_parens(self, allow_unit: bool = False) -> language.Expr:
         b = self.match_with_bounds('(').bounds
@@ -99,7 +128,7 @@ class Parser:
             case Word(')') as r if allow_unit:
                 self.consume()
                 b |= r.bounds
-                return language.Lit(WithBounds[Literal['()']]('()', b))
+                return language.LitU(DILocation(self.scope, b))
             case _:
                 e = self.parse_expr()
                 self.match(')')
@@ -110,47 +139,57 @@ class Parser:
         ...
 
     @overload
-    def parse_let(self, on_toplevel: Literal[True]) -> language.Decl | language.DeclRec:
+    def parse_let(self, on_toplevel: Literal[True]) -> (
+            language.Decl | language.DeclRec | language.Let | language.LetRec | language.LetTuple):
         ...
 
     def parse_let(self, on_toplevel: Literal[True, False] = False):
-        let = self.match_with_bounds('let')
+        _let = self.match_with_bounds('let')
         match self.peek():
             case Word('rec'):
-                rec = self.match_with_bounds('rec')
-                func = self.parse_ident()
-                if func.val == '_':
-                    raise WildcardCannotBeFunctionNameError(bounds=func.bounds)
-                args: list[WithBounds[str]] = []
+                _rec = self.match_with_bounds('rec')
+                tok_func = self.parse_ident()
+                if tok_func.val == '_':
+                    raise WildcardCannotBeFunctionNameError(bounds=tok_func.bounds)
+                tok_args: list[WithBounds[str]] = []
                 while True:
                     try:
-                        arg = self.parse_ident(allow_underscore=True)
-                        args.append(arg)
+                        tok_args.append(self.parse_ident(allow_underscore=True))
                     except ExpectLowercaseIdentifierError:
                         break
-                if len(args) == 0:
-                    raise FunctionDefinedWithNoParametersError(bounds=func.bounds)
-                check_linearity(*args)
+                if len(tok_args) == 0:
+                    raise FunctionDefinedWithNoParametersError(bounds=tok_func.bounds)
+                check_linearity(*tok_args)
                 self.match('=')
-                e1 = self.parse_expr()
-                function = language.Function(let, rec, func, args, e1)
-                if on_toplevel:
-                    match self.peek():
-                        case Word(';;' | 'let') | EOF():
-                            return language.DeclRec(function)
-                        case _:
-                            ...
 
-                self.match('in')
-                e2 = self.parse_expr()
+                with self.new_child_env():
+                    func = self.var_of_new_id(tok_func)
+                    self.env[tok_func.val] = func.name
+
+                    with self.new_child_env():
+                        args = tuple([self.var_of_new_id(arg) for arg in tok_args])
+                        self.env.update({tok.val: arg.name for tok, arg in zip(tok_args, args)})
+                        e1 = self.parse_expr()
+
+                    if on_toplevel:
+                        match self.peek():
+                            case Word(';;' | 'let') | EOF():
+                                function = language.Function(func, args, e1)
+                                return language.DeclRec(function)
+                            case _:
+                                ...
+
+                    function = language.Function(func, args, e1)
+                    self.match('in')
+                    e2 = self.parse_expr()
 
                 return language.LetRec(function, e2)
             case Word('('):
                 self.consume()
-                args = []
+                tok_args = []
                 while True:
                     try:
-                        args.append(self.parse_ident(allow_underscore=True))
+                        tok_args.append(self.parse_ident(allow_underscore=True))
                     except ExpectLowercaseIdentifierError:
                         raise UnexpectedTokenError(expected=['lowercase identifier', '_'], bounds=self.peek().bounds)
                     match self.peek():
@@ -161,27 +200,36 @@ class Parser:
                         case _:
                             raise UnexpectedTokenError(expected=[',', ')'], bounds=self.peek().bounds)
 
-                assert len(args) >= 2
-                check_linearity(*args)
+                assert len(tok_args) >= 2
+                check_linearity(*tok_args)
                 self.match(')')
                 self.match('=')
                 e1 = self.parse_expr()
                 self.match('in')
-                e2 = self.parse_expr()
-                return language.LetTuple(let, args, e1, e2)
+                with self.new_child_env():
+                    args = tuple(self.var_of_new_id(arg) for arg in tok_args)
+                    self.env.update({tok.val: arg.name for tok, arg in zip(tok_args, args)})
+                    e2 = self.parse_expr()
+                    return language.LetTuple(args, e1, e2)
             case Word(_):
-                var = self.parse_ident(allow_underscore=True)
+                tok_var = self.parse_ident(allow_underscore=True)
                 self.match('=')
                 e1 = self.parse_expr()
-                let_binding = language.LetBinding(let, var, e1)
-                if on_toplevel:
-                    match self.peek():
-                        case Word(';;' | 'let') | EOF():
-                            return language.Decl(let_binding)
-                        case _:
-                            ...
-                self.match('in')
-                e2 = self.parse_expr()
+                with self.new_child_env():
+                    var = self.var_of_new_id(tok_var)
+                    if tok_var.val != '_':
+                        self.env[tok_var.val] = var.name
+
+                    if on_toplevel:
+                        match self.peek():
+                            case Word(';;' | 'let') | EOF():
+                                let_binding = language.LetBinding(var, e1)
+                                return language.Decl(let_binding)
+                            case _:
+                                ...
+                    let_binding = language.LetBinding(var, e1)
+                    self.match('in')
+                    e2 = self.parse_expr()
                 return language.Let(let_binding, e2)
             case _:
                 raise UnexpectedTokenError(expected=['rec', '(', 'identifier'], bounds=self.peek().bounds)
@@ -191,7 +239,7 @@ class Parser:
         ...
 
     @overload
-    def parse_expr(self, on_toplevel: Literal[True]) -> language.Decl | language.DeclRec:
+    def parse_expr(self, on_toplevel: Literal[True]) -> language.Decl | language.DeclRec | language.Expr:
         ...
 
     def parse_expr(self, on_toplevel: Literal[True, False] = False):
@@ -199,8 +247,7 @@ class Parser:
             case Word('let'):
                 if on_toplevel:
                     return self.parse_let(on_toplevel)
-                else:
-                    return self.parse_let(on_toplevel)
+                return self.parse_let(on_toplevel)
             case Word('fun'):
                 raise NotImplementedError()
             case _:
@@ -231,13 +278,13 @@ class Parser:
             return language.Semi(tuple(es))
 
     def parse_if(self) -> language.If:
-        if_tok = self.match_with_bounds('if')
+        _if_tok = self.match_with_bounds('if')
         e1 = self.parse_expr()
         self.match('then')
         e2 = self.parse_expr()
         self.match('else')
         e3 = self.parse_let_fun_if_or(lambda: self.parse_put())
-        return language.If(if_tok, e1, e2, e3)
+        return language.If(e1, e2, e3)
 
     def skip_parens(self, n0: int = 0) -> int:
         """
@@ -288,13 +335,13 @@ class Parser:
             return tot if self.peek(n).match('<-') else None
 
         if (tot := guaranteed or is_put_lhs()) is not None:
-            lhs = self.parse_parens() if self.peek().match('(') else language.Var(self.parse_ident())
+            lhs = self.parse_parens() if self.peek().match('(') else self.parse_var()
             for _ in range(tot - 1):
                 self.match('.')
-                lparen = self.match_with_bounds('(')
+                _lparen = self.match_with_bounds('(')
                 e = self.parse_expr()
-                rparen = self.match_with_bounds(')')
-                lhs = language.Get(lhs, lparen, e, rparen)
+                _rparen = self.match_with_bounds(')')
+                lhs = language.Get(lhs, e)
             self.match('.')
             idx = self.parse_parens()
             self.match('<-')
@@ -354,7 +401,8 @@ class Parser:
                 case Word('<' | '<=' | '>' | '>=' | '=' | '<>' as op):
                     op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_addsub)
-                    e1 = language.Binary(op, e1, e2)
+                    loc = DILocation(self.scope, op.bounds)
+                    e1 = language.Binary(loc, op.val, e1, e2)
                 case _:
                     return e1
 
@@ -376,7 +424,8 @@ class Parser:
                 case Word('+' | '-' | '+.' | '-.' as op):
                     op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_muldiv)
-                    e1 = language.Binary(op, e1, e2)
+                    loc = DILocation(self.scope, op.bounds)
+                    e1 = language.Binary(loc, op.val, e1, e2)
                 case _:
                     return e1
 
@@ -387,7 +436,8 @@ class Parser:
                 case Word('*' | '/' | '*.' | '/.' as op):
                     op = self.match_with_bounds(op)
                     e2 = self.parse_let_fun_if_or(self.parse_unary)
-                    e1 = language.Binary(op, e1, e2)
+                    loc = DILocation(self.scope, op.bounds)
+                    e1 = language.Binary(loc, op.val, e1, e2)
                 case _:
                     return e1
 
@@ -397,7 +447,8 @@ class Parser:
                 assert op in ('-', '-.')
                 op = self.match_with_bounds(op)
                 e = self.parse_let_fun_if_or(self.parse_unary)
-                return language.Unary(op, e)
+                loc = DILocation(self.scope, op.bounds)
+                return language.Unary(loc, op.val, e)
             case Word('+'):
                 self.consume()
                 return self.parse_let_fun_if_or(self.parse_unary)
@@ -418,7 +469,7 @@ class Parser:
                         raise TrailingLambdaNotParenthesizedError(bounds=self.peek().bounds)
                     case _:
                         ...
-                e = language.App(e, *args)
+                e = language.App(e, tuple(args))
             else:
                 return e
 
@@ -429,10 +480,10 @@ class Parser:
             match self.peek():
                 case Word('.'):
                     self.consume()
-                    lparen = self.match_with_bounds('(')
+                    _lparen = self.match_with_bounds('(')
                     idx = self.parse_expr()
-                    rparen = self.match_with_bounds(')')
-                    e = language.Get(e, lparen, idx, rparen)
+                    _rparen = self.match_with_bounds(')')
+                    e = language.Get(e, idx)
                 case _:
                     return e
 
@@ -447,7 +498,7 @@ class Parser:
             case Word('if'):
                 return self.parse_if()
             case Word(_) as w if w.is_ident():
-                return language.Var(self.parse_ident())
+                return self.parse_var()
             case Word(_) as w if w.is_ident(capitalized=True):
                 path = [self.parse_ident(capitalized=True)]
                 self.match('.')
@@ -461,12 +512,30 @@ class Parser:
                 b = path[0].bounds
                 for i in range(1, len(path)):
                     b |= path[i].bounds
-                return \
-                    language.Var(WithBounds('.'.join(w.val for w in path), b))
-
-            case Val(int() | float() | bool() as x):
-                return language.Lit(self.match_val(x.__class__))
+                tok_var = WithBounds('.'.join(w.val for w in path), b)
+                try:
+                    if tok_var.val == 'Array.make':
+                        return language.Var(Id(), self.di_var(tok_var))
+                    return language.Var(self.env[tok_var.val], self.di_var(tok_var))
+                except KeyError:
+                    raise UnboundLocalError(tok_var.val)
+            case Val(bool()):
+                v = self.match_val(bool)
+                return language.LitB(DILocation(self.scope, v.bounds), v.val)
+            case Val(int()):
+                v = self.match_val(int)
+                return language.LitI(DILocation(self.scope, v.bounds), v.val)
+            case Val(float()):
+                v = self.match_val(float)
+                return language.LitF(DILocation(self.scope, v.bounds), v.val)
             case Val(_):
                 raise NotImplementedError()
             case _:
                 raise UnexpectedTokenError(expected="atomic expression", bounds=self.peek().bounds)
+
+    def parse_var(self):
+        ident = self.parse_ident()
+        try:
+            return language.Var(self.env[ident.val], self.di_var(ident))
+        except KeyError:
+            raise UnBoundVariableError(word=ident)

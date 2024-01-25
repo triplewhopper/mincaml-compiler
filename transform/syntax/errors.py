@@ -76,3 +76,8 @@ class TrailingLambdaNotParenthesizedError(ParseError):
 
 class ExternalVariableTypeError(ValueError):
     ...
+
+
+class UnBoundVariableError(ParseError):
+    def __init__(self, /, *, word: WithBounds[str]):
+        super(UnBoundVariableError, self).__init__(f"unbound variable '{word.val}'", word.bounds)

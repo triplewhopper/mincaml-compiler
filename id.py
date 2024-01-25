@@ -1,12 +1,15 @@
 # from abc import ABC, abstractmethod
-from metadata import DIVariable
+from metadata import DIVariable, DIIntrinsics
 
+
+# from bounds import Bounds
 
 class Id:
+    __slots__ = '_id'
     _counter = 0
+    di_vars: dict['Id', DIVariable | DIIntrinsics] = {}
 
-    def __init__(self, metadata: DIVariable | None = None):
-        self.metadata = metadata
+    def __init__(self):
         self._id = Id._counter
         Id._counter += 1
 
@@ -18,9 +21,26 @@ class Id:
     def __hash__(self):
         return hash((Id, self._id))
 
-    @property
-    def is_tmp(self):
-        return self.metadata is None
+    def __str__(self):
+        try:
+            return self.di_vars[self].name
+        except KeyError:
+            return f"__{self._id}"
+
+    def __repr__(self):
+        return f"<id {self._id}>"
+    
+    def add_to_intrinsics(self, name: str):
+        Id.di_vars[self] = DIIntrinsics(name)
+    # def replace_metadata(self, metadata: Metadata):
+    #     x = Id(metadata)
+    #     Id._counter -= 1 
+    #     x._id = self._id
+    #     return x
+
+    # @property
+    # def is_tmp(self):
+    #     return self.metadata is None
 
 # class Id(ABC):
 #     __slots__ = '_ir_prefix'

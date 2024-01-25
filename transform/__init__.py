@@ -20,7 +20,7 @@ def bind_logger(*, logger: logging.Logger):
 
     @contextlib.contextmanager
     def get_adapter(bounds: Bounds | None = None):
-        assert bounds is None or isinstance(bounds, Bounds)
+        assert isinstance(bounds, Bounds) or bounds is None
         if bounds is None:
             yield adapter
             return

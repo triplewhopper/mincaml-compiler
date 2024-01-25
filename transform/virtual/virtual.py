@@ -1,6 +1,6 @@
 import contextlib
 
-from id import Id, tmp_id_factory, LocalId, GlobalId, TmpId, SuffixId
+from id import Id # , tmp_id_factory, LocalId, GlobalId, TmpId, SuffixId
 import logging
 from ty import Ty
 from functools import lru_cache
@@ -394,9 +394,9 @@ class GlobalValue(Value):
 class GlobalVariable(GlobalValue):
     __slots__ = 'name',
 
-    def __init__(self, typ: Type, name: GlobalId, /):
+    def __init__(self, typ: Type, name: Id, /):
         super(GlobalVariable, self).__init__(typ)
-        assert isinstance(name, GlobalId)
+        assert isinstance(name, Id)
         self.name = name
 
     def __str__(self):
@@ -602,7 +602,7 @@ class IRBuilder:
 class Argument(Value):
     __slots__ = 'rd',
 
-    def __init__(self, typ: Type, name: LocalId | SuffixId, /):
+    def __init__(self, typ: Type, name: Id, /):
         super(Argument, self).__init__(typ)
         self.rd = name
 
@@ -611,7 +611,7 @@ class Argument(Value):
 
 
 class Function(GlobalValue):
-    def __init__(self, funct: Id, typ: FunctionType, args: tuple[LocalId | SuffixId | Argument, ...],
+    def __init__(self, funct: Id, typ: FunctionType, args: tuple[Id | Argument, ...],
                  formal_fv: tuple[tuple[Id, Type], ...], /):
         assert len(args) == len(typ.args) and isinstance(typ, FunctionType)
         assert all(isinstance(arg, (Argument, LocalId, SuffixId)) for arg in args)
@@ -968,7 +968,7 @@ class Function(GlobalValue):
 # class LoadImm(HasRd):
 #     __slots__ = 'imm',
 #
-#     def __init__(self, val: bool | int | float, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+#     def __init__(self, val: bool | int | float, /, *, rd: Id | None = None):
 #         match val:
 #             case bool():
 #                 super(LoadImm, self).__init__(PreludeTy.i1, rd)
@@ -1014,7 +1014,7 @@ class Mov(HasRd, _HasRs):
 class GetElementPtr(HasRd, _HasRs):
     __slots__ = 'rs', 'indices', 'gep_typs'
 
-    def __init__(self, rs: Value, /, *indices: Value, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, /, *indices: Value, rd: Id | None = None):
         _HasRs.__init__(self, rs)
         assert 1 <= len(indices) and all(isinstance(x, Value) for x in indices)
         assert isinstance(rs.typ, PointerType)
@@ -1089,7 +1089,7 @@ class ExtractValue(HasRd, _HasRs):
     operands = _HasRs.operands
     replace_all_uses = _HasRs.replace_all_uses
 
-    def __init__(self, rs: Value, /, *indices: int, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, /, *indices: int, rd: Id | None = None):
         _HasRs.__init__(self, rs)
         assert isinstance(rs.typ, LiteralStructType)
         assert len(indices) >= 1 and all(isinstance(x, int) for x in indices)
@@ -1111,7 +1111,7 @@ class ExtractValue(HasRd, _HasRs):
 class InsertValue(HasRd, _HasRs):
     __slots__ = 'rs', 'val', 'indices'
 
-    def __init__(self, rs: Value, /, val: Value, *indices: int, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, /, val: Value, *indices: int, rd: Id | None = None):
         _HasRs.__init__(self, rs)
         assert isinstance(rs.typ, LiteralStructType)
         assert len(indices) >= 1 and all(isinstance(x, int) for x in indices)
@@ -1199,7 +1199,7 @@ class BitCast(HasRd, _HasRs):
     operands = _HasRs.operands
     replace_all_uses = _HasRs.replace_all_uses
 
-    def __init__(self, rs: Value, typ: Type, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, typ: Type, /, *, rd: Id | None = None):
         _HasRs.__init__(self, rs)
         HasRd.__init__(self, typ, rd)
         assert get_abi_size(typ) == get_abi_size(rs.typ)
@@ -1239,7 +1239,7 @@ class _ICmp(HasRd, _HasRs1Rs2):
     operands = _HasRs1Rs2.operands
     replace_all_uses = _HasRs1Rs2.replace_all_uses
 
-    def __init__(self, rs1: Value, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs1: Value, rs2: Value, /, *, rd: Id | None = None):
         _HasRs1Rs2.__init__(self, rs1, rs2)
         assert rs1.typ == rs2.typ
         assert rs1.typ == PreludeTy.i32 or rs1.typ.is_pointer
@@ -1256,7 +1256,7 @@ class _ICmp(HasRd, _HasRs1Rs2):
 #     __slots__ = 'rs1', 'imm'
 #     op = ''
 #
-#     def __init__(self, rs1: HasRd, imm: Imm, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+#     def __init__(self, rs1: HasRd, imm: Imm, /, *, rd: Id | None = None):
 #         _HasRs1.__init__(self, rs1)
 #         assert rs1.typ == i32 or rs1.typ.is_pointer and imm.val == 0
 #         assert 0 <= imm.val < 2 ** 5
@@ -1309,7 +1309,7 @@ class _FCmp(HasRd, _HasRs1Rs2):
     operands = _HasRs1Rs2.operands
     replace_all_uses = _HasRs1Rs2.replace_all_uses
 
-    def __init__(self, rs1: Value, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs1: Value, rs2: Value, /, *, rd: Id | None = None):
         _HasRs1Rs2.__init__(self, rs1, rs2)
         assert rs1.typ == rs2.typ == FloatType()
         HasRd.__init__(self, PreludeTy.i1, rd)
@@ -1369,7 +1369,7 @@ class Arith2(HasRd, _HasRs1Rs2):
     opearands = _HasRs1Rs2.operands
     replace_all_uses = _HasRs1Rs2.replace_all_uses
 
-    def __init__(self, rs1: Value, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs1: Value, rs2: Value, /, *, rd: Id | None = None):
         _HasRs1Rs2.__init__(self, rs1, rs2)
         assert rs1.typ == rs2.typ
         assert get_abi_size(rs1.typ) == 4
@@ -1383,7 +1383,7 @@ class Arith2(HasRd, _HasRs1Rs2):
 class _AddSubMulDiv(Arith2):
     __slots__ = ()
 
-    def __init__(self, rs1: Value, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs1: Value, rs2: Value, /, *, rd: Id | None = None):
         super(_AddSubMulDiv, self).__init__(rs1, rs2, rd=rd)
         assert self.typ == PreludeTy.i32
 
@@ -1411,7 +1411,7 @@ class Div(_AddSubMulDiv):
 class _FAddSubMulDiv(Arith2):
     __slots__ = ()
 
-    def __init__(self, rs1: Value, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs1: Value, rs2: Value, /, *, rd: Id | None = None):
         super(_FAddSubMulDiv, self).__init__(rs1, rs2, rd=rd)
         assert rs1.typ == rs2.typ == PreludeTy.f32
 
@@ -1442,7 +1442,7 @@ class Arith1(HasRd, _HasRs):
     operands = _HasRs.operands
     replace_all_uses = _HasRs.replace_all_uses
 
-    def __init__(self, rs: Value, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, rd: Id | None = None):
         HasRd.__init__(self, rs.typ, rd)
         _HasRs.__init__(self, rs)
 
@@ -1455,7 +1455,7 @@ class Neg(Arith1):
     __slots__ = ()
     uop = 'neg'
 
-    def __init__(self, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs2: Value, /, *, rd: Id | None = None):
         super(Neg, self).__init__(rs2, rd)
         assert self.typ == PreludeTy.i32
 
@@ -1467,7 +1467,7 @@ class FNeg(Arith1):
     __slots__ = ()
     uop = 'fneg'
 
-    def __init__(self, rs2: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs2: Value, /, *, rd: Id | None = None):
         super(FNeg, self).__init__(rs2, rd)
         assert self.typ == PreludeTy.f32
 
@@ -1496,7 +1496,7 @@ class FNeg(Arith1):
 class Call(HasRd):
     __slots__ = 'callee', 'args', 'tail'
 
-    def __init__(self, callee: Value, *args: Value, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, callee: Value, *args: Value, rd: Id | None = None):
         ftype = assert_function_pointer(callee.typ)
         assert ftype.return_type != PreludeTy.void
         assert all(isinstance(x, Value) for x in args) and len(ftype.args) == len(args)
@@ -1556,7 +1556,7 @@ class Ret(HasRd, _HasRs):
     operands = _HasRs.operands
     replace_all_uses = _HasRs.replace_all_uses
 
-    def __init__(self, rs: Value, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, rs: Value, /, *, rd: Id | None = None):
         HasRd.__init__(self, rs.typ, rd)
         _HasRs.__init__(self, rs)
         assert rs.typ != PreludeTy.void
@@ -1580,7 +1580,7 @@ class Calloc(HasRd):
     __slots__ = 'num', 'size'
 
     def __init__(self, num: Value, size: Value, /, *,
-                 rd: LocalId | TmpId | SuffixId | None = None):
+                 rd: Id | None = None):
         assert isinstance(num, Value) and isinstance(size, Value)
         HasRd.__init__(self, PreludeTy.i8.as_pointer(), rd)
         assert num.typ == PreludeTy.i32 and size.typ == PreludeTy.i32
@@ -1603,7 +1603,7 @@ class Calloc(HasRd):
 class Alloca(HasRd):
     __slots__ = ()
 
-    def __init__(self, typ: Type, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, typ: Type, /, *, rd: Id | None = None):
         HasRd.__init__(self, typ.as_pointer(), rd)
 
     def __str__(self):
@@ -1613,7 +1613,7 @@ class Alloca(HasRd):
 class Phi(HasRd):
     __slots__ = 'incoming',
 
-    def __init__(self, typ: Type, /, *, rd: LocalId | TmpId | SuffixId | None = None):
+    def __init__(self, typ: Type, /, *, rd: Id | None = None):
         super(Phi, self).__init__(typ, rd)
         self.incoming: list[tuple[Value, BasicBlock]] = []
 

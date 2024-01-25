@@ -1,17 +1,16 @@
 import contextlib
 from collections import ChainMap
-from transform.knormal import KNormal, Lit, Var, Ext, Get, Unary, App, Binary, Seq, Tuple, Put, If, Let, LetTuple, \
+from transform.knormal import KNormal, LitU, LitI, LitB, LitF, Var, Get, Unary, App, Binary, Seq, Tuple, Put, If, Let, LetTuple, \
     LetRec, Function, LetBinding
 
 from ty import TyTuple, TyFun, Ty, T
-from id import GlobalId, LocalId, Id
+from id import Id
 import transform.closure as cl
 import logging
 from .. import bind_logger
 from collections.abc import Generator
-from typing import TypeVar
 
-G = TypeVar("G", GlobalId, LocalId)
+# G = TypeVar("G", GlobalId, LocalId)
 
 get_adapter = bind_logger(logger=logging.getLogger(__name__))
 
@@ -25,21 +24,21 @@ def fv(*xs: cl.Exp[Ty] | cl.LetBinding | cl.Cls):
 
 class ClosureConverter:
 
-    def __init__(self, known: dict[TyFun, set[GlobalId]]):
-        self.env: ChainMap[Id, Ty] = ChainMap()
-        self.known: set[GlobalId | LocalId] = {x for v in known.values() for x in v}
-        self.global_vars: set[LocalId] = set()
+    def __init__(self, known: dict[Id, Ty]):
+        self.env: dict[Id, Ty] = {}
+        self.known: set[Id] = set(known)
+        self.global_vars: dict[Id, Ty] = {}
         self.toplevel_funcs: list[cl.Function] = []
 
-    @contextlib.contextmanager
-    def new_child_env(self, env: dict[Id, Ty]):
-        self.env = self.env.new_child(env)
-        try:
-            yield
-        finally:
-            self.env = self.env.parents
+    # @contextlib.contextmanager
+    # def new_child_env(self, env: dict[Id, Ty]):
+    #     self.env = self.env.new_child(env)
+    #     try:
+    #         yield
+    #     finally:
+    #         self.env = self.env.parents
 
-    def convert(self, *es: KNormal[Ty] | Function[GlobalId] | LetBinding) \
+    def convert(self, *es: KNormal[Ty] | Function | LetBinding) \
             -> tuple[list[cl.Function], list[cl.Exp[Ty] | cl.Cls | cl.LetBinding]]:
         """
         Converts a KNormal expression into a list of functions and an expression.
@@ -54,20 +53,21 @@ class ClosureConverter:
                     yield from deal(i + 1)
 
                 case Function(funct=funct) as f:
-                    assert len(self.env.maps) == 1
+                    # assert len(self.env.maps) == 1
                     func, zs = self.visit_Function(f)
                     self.env[funct] = func.typ
                     # self.global_vars.add(funct)
                     rest = list(deal(i + 1))
-                    if funct in fv(*rest):
+                    fv_rest = fv(*rest)
+                    if funct in fv_rest:
                         yield cl.Cls(func, tuple(zs))
                     yield from rest
 
                 case LetBinding() as b:
-                    assert len(self.env.maps) == 1
+                    # assert len(self.env.maps) == 1
                     rhs = self.visit(b.rhs, name=b.lhs)
                     self.env[b.lhs] = rhs.typ
-                    self.global_vars.add(b.lhs)
+                    self.global_vars[b.lhs] = rhs.typ
                     yield cl.LetBinding(b, rhs)
                     yield from deal(i + 1)
 
@@ -76,49 +76,59 @@ class ClosureConverter:
         b = list(deal(0))
         return self.toplevel_funcs.copy(), b
 
-    def visit(self, e: KNormal[T], /, *, name: Id | None = None) -> cl.Exp[T]:
-        return getattr(self, f"visit_{e.__class__.__name__}")(e, name=name)
+    def visit(self, e: KNormal[Ty] | cl.AppCls | cl.AppDir, /, *, name: Id | None = None) -> cl.Exp[Ty]:
+        match e:
+            case LitU():
+                return cl.LitU(e)
+            case LitI():
+                return cl.LitI(e)
+            case LitB():
+                return cl.LitB(e)
+            case LitF():
+                return cl.LitF(e)
+            case Var():
+                return cl.Var(e)
+            case Get():
+                return cl.Get(e)
+            case Unary():
+                return cl.Unary(e)
+            case App():
+                return self.visit_App(e)
+            case Binary():
+                return cl.Binary(e)
+            case Seq():
+                return self.visit_Seq(e, name=name)
+            case Tuple():
+                return self.visit_Tuple(e, name=name)
+            case Put():
+                return cl.Put(e)
+            case If():
+                return self.visit_If(e)
+            case Let():
+                return self.visit_Let(e, name=name)
+            case LetTuple():
+                return self.visit_LetTuple(e, name=name)
+            case LetRec():
+                return self.visit_LetRec(e, name=name)
+            case cl.AppCls() | cl.AppDir():
+                return e
+            case _:
+                raise NotImplementedError(e)
 
-    def visit_Lit(self, node: Lit, _):
-        return cl.Lit(node)
 
-    def visit_Var(self, node: Var, _):
-        return cl.Var(node)
+    # def visit_Ext(self, node: Ext, _):
+    #     if isinstance(node.typ, TyFun):
+    #         self.known.add(node.name)
+    #     return cl.Ext(node)
 
-    def visit_Ext(self, node: Ext, _):
-        if isinstance(node.typ, TyFun):
-            self.known.add(node.name)
-        return cl.Ext(node)
 
-    def visit_Get(self, node: Get, _):
-        return cl.Get(node)
-
-    def visit_Unary(self, node: Unary, _):
-        return cl.Unary(node)
-
-    def visit_App(self, node: App, _):
+    def visit_App(self, node: App):
         if node.callee in self.known:
-            assert isinstance(node.callee, (GlobalId, LocalId))
             # with get_adapter(bounds=node.callee.bounds) as adapter:
             #     adapter.info(f"directly applying function '{node.callee}'")
             return cl.AppDir(node)
         else:
             return cl.AppCls(node)
-
-    def visit_AppDir(self, node: App, _) -> cl.AppDir:
-        """
-        This method can be called because in visit_LetRec, there may be need to visit function's body one more time.
-        """
-        assert isinstance(node, cl.AppDir)
-        return node
-
-    def visit_AppCls(self, node: App, _) -> cl.AppCls:
-        """This method can be called, due to the same reason as visit_AppDir."""
-        assert isinstance(node, cl.AppCls)
-        return node
-
-    def visit_Binary(self, node: Binary, _) -> cl.Binary:
-        return cl.Binary(node)
 
     def visit_Seq(self, node: Seq, /, *, name: Id | None = None):
         xs: list[cl.Exp[Ty]] = []
@@ -137,61 +147,65 @@ class ClosureConverter:
     def visit_Put(self, node: Put, _):
         return cl.Put(node)
 
-    def visit_If(self, node: If, _):
+    def visit_If(self, node: If, /):
         b1 = self.visit(node.br_true)
         b2 = self.visit(node.br_false)
 
         return cl.If(node, b1, b2)
 
-    def visit_Let(self, node: Let[T], /, *, name: Id | None = None) -> cl.Let[T]:
+    def visit_Let(self, node: Let[Ty], /, *, name: Id | None = None) -> cl.Let[Ty]:
         rhs = self.visit(node.binding.rhs, name=node.binding.lhs)
-        with self.new_child_env({node.binding.lhs: rhs.typ}):
-            expr = self.visit(node.expr, name=name)
+        self.env.update({node.binding.lhs: rhs.typ})
+        expr = self.visit(node.expr, name=name)
         return cl.Let(node, rhs, expr)
 
     def visit_LetTuple(self, node: LetTuple[T], /, *, name: Id | None = None):
         assert node.y in self.env
         y_ty = self.env[node.y]
         assert isinstance(y_ty, TyTuple) and y_ty.elems == node.ts
-        self.env = self.env.new_child(dict(zip(node.xs, node.ts)))
+        self.env.update(zip(node.xs, node.ts))
         e = self.visit(node.e, name=name)
-        self.env = self.env.parents
+        # self.env = self.env.parents
         return cl.LetTuple(node, e)
 
-    def visit_Function(self, f: Function[LocalId]) -> tuple[cl.Function, list[LocalId]]:
+    def visit_Function(self, f: Function) -> tuple[cl.Function, list[Id]]:
         toplevel_backup = self.toplevel_funcs.copy()
-        with self.new_child_env({f.funct: f.typ}):
-            self.env.update(f.iter_args())
-            self.known.add(f.funct)
+        # with self.new_child_env({f.funct: f.typ}):
+        assert f.funct not in self.env or self.env[f.funct] == f.typ
+        self.env[f.funct] = f.typ
+        self.env.update(f.iter_args())
+        self.known.add(f.funct)
+        body1 = self.visit(f.body)
+
+        zs = fv(body1).difference(f.formal_args).difference(self.global_vars)
+
+        if len(zs) > 0:
+            def quoted(x: str):
+                return f"'{x}'"
+
+            # with get_adapter(bounds=f.bounds) as adapter:
+            #     adapter.info(
+            #         f"free variable(s) found in function {f.funct}: {', '.join(quoted(str(z)) for z in zs)}\n"
+            #         f"function {f.funct} cannot be directly applied in fact.")
+
+            self.toplevel_funcs = toplevel_backup
+            self.known.remove(f.funct)
             body1 = self.visit(f.body)
 
-            zs = fv(body1).difference(f.formal_args).difference(self.global_vars)
+        zs = list(fv(body1).difference({f.funct}.union(f.formal_args).union(self.global_vars)))
+        zts = [(z, self.env[z]) for z in zs]
 
-            if len(zs) > 0:
-                def quoted(x: str):
-                    return f"'{x}'"
-
-                with get_adapter(bounds=f.bounds) as adapter:
-                    adapter.info(
-                        f"free variable(s) found in function {f.funct}: {', '.join(quoted(str(z)) for z in zs)}\n"
-                        f"function {f.funct} cannot be directly applied in fact.")
-
-                self.toplevel_funcs = toplevel_backup
-                self.known.remove(f.funct)
-                body1 = self.visit(f.body)
-
-            zs = list(fv(body1).difference({f.funct}.union(f.formal_args).union(self.global_vars)))
-            zts = [(z, self.env[z]) for z in zs]
-
-            func = cl.Function(f, body1, tuple(zts))
-            self.toplevel_funcs.append(func)
+        func = cl.Function(f, body1, tuple(zts))
+        self.toplevel_funcs.append(func)
 
         return func, zs
 
-    def visit_LetRec(self, node: LetRec[T], /, *, name: Id | None = None):
+    def visit_LetRec(self, node: LetRec, /, *, name: Id | None = None):
         func, zs = self.visit_Function(node.f)
-        with self.new_child_env({node.f.funct: func.typ}):
-            e2 = self.visit(node.e, name=name)
+        # with self.new_child_env({node.f.funct: func.typ}):
+        assert node.f.funct in self.env and self.env[node.f.funct] == func.typ
+        self.env[node.f.funct] = func.typ
+        e2 = self.visit(node.e, name=name)
         if node.f.funct in fv(e2):
             return cl.MakeCls(node, cl.Cls(func, tuple(zs)), e2)
         else:

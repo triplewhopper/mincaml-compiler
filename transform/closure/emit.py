@@ -6,7 +6,7 @@ import llvmlite.binding as binding
 import id
 import transform.knormal as kn
 from . import language as cl
-from .visitor import ExpVisitor
+# from .visitor import ExpVisitor
 from collections import ChainMap
 from functools import lru_cache
 import ty
@@ -21,8 +21,8 @@ rv32_triple = "riscv32-unknown-unknown"
 target_data = binding.create_target_data(rv32_layout)
 
 
-def partition(xts: Iterable[tuple[id.LocalId, ty.Ty]]) -> \
-        tuple[list[id.LocalId], list[ir.Type], list[id.LocalId]]:
+def partition(xts: Iterable[tuple[id.Id, ty.Ty]]) -> \
+        tuple[list[id.Id], list[ir.Type], list[id.Id]]:
     y1s, y2s, ns = [], [], []
     for x, t in xts:
         t = IREmitter.get_ir_ty(t)
@@ -34,7 +34,7 @@ def partition(xts: Iterable[tuple[id.LocalId, ty.Ty]]) -> \
     return y1s, y2s, ns
 
 
-class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
+class IREmitter:
 
     @staticmethod
     @lru_cache(maxsize=128)
@@ -80,7 +80,7 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
         else:
             return [IREmitter.get_ir_ty(t) for t in typs]
 
-    def get_fn_decl(self, fns: set[id.GlobalId], ml_ty: ty.TyFun) -> dict[id.GlobalId, ir.Function]:
+    def get_fn_decl(self, fns: set[id.Id], ml_ty: ty.TyFun) -> dict[id.Id, ir.Function]:
         declared: dict[str, ir.Function] = {}
         ans: dict[id.GlobalId, ir.Function] = {}
         ir_ext_fn_ty = ir.FunctionType(IREmitter.get_ir_ty(ml_ty.ret), IREmitter.get_ir_tys(ml_ty.args))
@@ -116,7 +116,7 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
         return ans
 
     def get_local_fn_decl(self, ml_fn: cl.Function) -> \
-            tuple[ir.Function, Callable[[ir.IRBuilder], dict[id.LocalId, ir.NamedValue | None]]]:
+            tuple[ir.Function, Callable[[ir.IRBuilder], dict[id.Id, ir.NamedValue | None]]]:
 
         non_void_arg_names, non_void_arg_types, void_arg_names = partition(ml_fn.iter_args())
         non_void_fv_names, non_void_fv_types, void_fv_names = partition(ml_fn.formal_fv)
@@ -154,7 +154,7 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
             ir_fn.args[-1].add_attribute('noundef')
         del ml_fn_ir_ty
 
-        def get_fn_local_env(builder: ir.IRBuilder) -> dict[id.LocalId, ir.NamedValue | None]:
+        def get_fn_local_env(builder: ir.IRBuilder) -> dict[id.Id, ir.NamedValue | None]:
             ir_fn_local_env = {void_arg_name: None for void_arg_name in void_arg_names}
             for non_void_name, arg in zip(non_void_arg_names, ir_fn.args):
                 ir_fn_local_env[non_void_name] = arg
@@ -169,8 +169,8 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
 
         return ir_fn, get_fn_local_env
 
-    def get_ext_var_decl(self, ext_vars: set[id.GlobalId], ml_ext_ty: ty.TyArray | ty.TyTuple) -> dict[
-        id.GlobalId, ir.GlobalVariable]:
+    def get_ext_var_decl(self, ext_vars: set[id.Id], ml_ext_ty: ty.TyArray | ty.TyTuple) -> dict[
+        id.Id, ir.GlobalVariable]:
         assert isinstance(ml_ext_ty, (ty.TyArray, ty.TyTuple))
         declared: dict[str, ir.GlobalVariable] = {}
         ans: dict[id.GlobalId, ir.GlobalVariable] = {}
@@ -198,11 +198,11 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
         self.ir_main = ir.Function(self.module, ir_main_ty, name='caml_main')
         logger.info(f"Creating function @{self.ir_main.name} with type '{ir_main_ty}'")
         self._env: ChainMap[id.Id, ir.NamedValue | None] = ChainMap()
-        self._mk_local_fn_env: dict[id.LocalId, Callable[[ir.IRBuilder], dict[id.LocalId, ir.NamedValue | None]]] = {}
+        self._mk_local_fn_env: dict[id.Id, Callable[[ir.IRBuilder], dict[id.Id, ir.NamedValue | None]]] = {}
         self.builder = ir.IRBuilder(self.ir_main.append_basic_block(name="entry"))
 
-    def emit(self, ext_fns: dict[ty.TyFun, set[id.GlobalId]],
-             ext_vars: dict[ty.TyArray | ty.TyTuple, set[id.GlobalId]],
+    def emit(self, ext_fns: dict[ty.TyFun, set[id.Id]],
+             ext_vars: dict[ty.TyArray | ty.TyTuple, set[id.Id]],
              ml_local_fns: list[cl.Function],
              mains: list[cl.Exp | cl.Cls | cl.LetBinding]) -> None:
 
@@ -296,10 +296,10 @@ class IREmitter(ExpVisitor[ir.NamedValue | ir.Constant | None]):
     def visit_Var(self, node: cl.Var):
         return self.lookup(node.name)
 
-    def visit_Ext(self, node: cl.Ext):
-        v = self._env.maps[-1][node.name]
-        assert isinstance(v, ir.GlobalVariable)
-        return self.builder.load(v)
+    # def visit_Ext(self, node: cl.Ext):
+    #     v = self._env.maps[-1][node.name]
+    #     assert isinstance(v, ir.GlobalVariable)
+    #     return self.builder.load(v)
 
     def visit_Get(self, node: cl.Get):
         arr = self.lookup(node.array)

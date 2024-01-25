@@ -1,9 +1,9 @@
 from withbounds import WithBounds
 from bounds import Bounds
 from transform.knormal import BinaryOpKind, UnaryOpKind
-from .language import Exp, Lit, Var, Ext, Get, Unary, AppDir, AppCls, Binary, Seq, Tuple, Put, If, Let, LetTuple, \
+from .language import Exp, Lit, Var, Get, Unary, AppDir, AppCls, Binary, Seq, Tuple, Put, If, Let, LetTuple, \
     MakeCls, Function, Cls, LetBinding
-from id import Id, LocalId, GlobalId, tmp_id_factory
+from id import Id # , Id, Id, tmp_id_factory
 from ty import Ty, TyFun, TyTuple, TyUnit, TyArray, TyInt, TyFloat, TyBool
 # from .visitor import ExpVisitor
 from .emit import IREmitter as LLVMIREmitter, partition
@@ -45,9 +45,9 @@ def prune(t: Ty) -> Ty:
 
 
 class Flatten:
-    def get_fn_decl(self, fns: set[GlobalId], ml_ty: TyFun) -> dict[GlobalId, V.Function]:
+    def get_fn_decl(self, fns: set[Id], ml_ty: TyFun) -> dict[Id, V.Function]:
         declared: dict[str, V.Function] = {}
-        ans: dict[GlobalId, V.Function] = {}
+        ans: dict[Id, V.Function] = {}
         ir_ext_fn_ty = ir.FunctionType(LLVMIREmitter.get_ir_ty(ml_ty.ret), LLVMIREmitter.get_ir_tys(ml_ty.args))
         assert isinstance(ir_ext_fn_ty, ir.FunctionType)
         for fn in fns:
@@ -78,11 +78,11 @@ class Flatten:
                 ans[fn] = declared[name]
         return ans
 
-    def get_ext_var_decl(self, ext_vars: set[GlobalId], ml_ext_ty: TyArray | TyTuple) \
-            -> dict[GlobalId, V.GlobalVariable]:
+    def get_ext_var_decl(self, ext_vars: set[Id], ml_ext_ty: TyArray | TyTuple) \
+            -> dict[Id, V.GlobalVariable]:
         assert isinstance(ml_ext_ty, (TyArray, TyTuple))
         declared: dict[str, V.GlobalVariable] = {}
-        ans: dict[GlobalId, V.GlobalVariable] = {}
+        ans: dict[Id, V.GlobalVariable] = {}
         ir_ext_var_ty = LLVMIREmitter.get_ir_ty(ml_ext_ty)
         for ext_var in ext_vars:
             if ext_var.val.val not in declared:
@@ -99,12 +99,12 @@ class Flatten:
 
         return ans
 
-    def get_global_var_decl(self, global_vars: set[LocalId], ml_global_ty: Ty) \
-            -> dict[LocalId, V.GlobalVariable]:
+    def get_global_var_decl(self, global_vars: set[Id], ml_global_ty: Ty) \
+            -> dict[Id, V.GlobalVariable]:
         if isinstance(ml_global_ty, TyFun):
             return {}
         declared: dict[str, V.GlobalVariable] = {}
-        ans: dict[LocalId, V.GlobalVariable] = {}
+        ans: dict[Id, V.GlobalVariable] = {}
         ir_global_var_ty = LLVMIREmitter.get_ir_ty(ml_global_ty)
         for global_var in global_vars:
             if global_var.val.val not in declared:
@@ -122,7 +122,7 @@ class Flatten:
         return ans
 
     def get_local_fn_decl(self, ml_fn: Function) \
-            -> tuple[ir.Function, Callable[[V.IRBuilder], dict[LocalId, V.HasRd | None]]]:
+            -> tuple[ir.Function, Callable[[V.IRBuilder], dict[Id, V.HasRd | None]]]:
 
         non_void_arg_names, non_void_arg_types, void_arg_names = partition(ml_fn.iter_args())
         non_void_fv_names, non_void_fv_types, void_fv_names = partition(ml_fn.formal_fv)
@@ -147,7 +147,7 @@ class Flatten:
         del ml_fn_ir_ty
 
         def get_fn_local_env(builder: V.IRBuilder):
-            ir_fn_local_env: dict[LocalId, V.HasRd | None] = {void_arg_name: None for void_arg_name in void_arg_names}
+            ir_fn_local_env: dict[Id, V.HasRd | None] = {void_arg_name: None for void_arg_name in void_arg_names}
             for arg in ir_fn.args:
                 ir_fn_local_env[arg.rd] = arg
 
@@ -167,14 +167,14 @@ class Flatten:
     @staticmethod
     def create_main():
         m = WithBounds('main', Bounds('flatten.py', 1, 1, 1, 1))
-        m = LocalId.create_definition(m)
+        m = Id.create_definition(m)
         f = V.Function(m, ir.FunctionType(ir.IntType(32), []), (), ())
         return f
 
     def __init__(self):
         # self._global_offset_table: dict[Id | V.Label, Future[int]] = {}
         # self._global_offset_table_label = V.Label('global_offset_table')
-        self._locals_stack: dict[GlobalId, dict[Id, int]] = {}
+        self._locals_stack: dict[Id, dict[Id, int]] = {}
         self._ty_env: dict[Id, ir.Type] = {}
         self._env: dict[Id, V.HasRd | V.GlobalVariable | None] = {}
         self._functions = ChainMap[Id, V.Function]()
@@ -183,7 +183,7 @@ class Flatten:
         self._floats: list[float] = []
         self._frame: dict[Id, int] = {}
 
-    def emit(self, ext_fns: dict[TyFun, set[GlobalId]], global_varss: dict[Ty, set[LocalId]],
+    def emit(self, ext_fns: dict[TyFun, set[Id]], global_varss: dict[Ty, set[Id]],
              ml_local_fns: list[Function], mains: list[Exp | Cls | LetBinding]):
         for global_var_ty, global_vars in global_varss.items():
             self._env.update(self.get_global_var_decl(global_vars, global_var_ty))
@@ -192,7 +192,7 @@ class Flatten:
             self._functions.update(self.get_fn_decl(ext_fns1, ext_fn_ty))
 
         self._functions = self._functions.new_child()
-        mk_local_fn_env: dict[LocalId, Callable[[V.IRBuilder], dict[LocalId, V.HasRd | None]]] = {}
+        mk_local_fn_env: dict[Id, Callable[[V.IRBuilder], dict[Id, V.HasRd | None]]] = {}
         for ml_fn in ml_local_fns:
             assert ml_fn.funct not in self._functions, f"why function '{ml_fn.funct}' is already defined?"
             f, g = self.get_local_fn_decl(ml_fn)
@@ -282,11 +282,11 @@ class Flatten:
     def visit_Var(self, node: Var):
         return self.lookup(node.name)
 
-    def visit_Ext(self, node: Ext):
-        assert node.typ is not TyUnit()
-        res = self._env[node.name]
-        assert isinstance(res, V.Function)
-        return res
+    # def visit_Ext(self, node: Ext):
+    #     assert node.typ is not TyUnit()
+    #     res = self._env[node.name]
+    #     assert isinstance(res, V.Function)
+    #     return res
 
     def visit_Get(self, node: Get):
         arr = self.lookup(node.array)

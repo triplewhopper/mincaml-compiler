@@ -131,7 +131,8 @@ class EOF(Tok):
 
 
 def lex(filepath: str):
-    if os.system(f"./lex {filepath}"):
+
+    if os.system(f"{os.path.dirname(__file__)}/lex {filepath}") != 0:
         raise RuntimeError("Lex failed")
     with open(f"{filepath}.lex") as f:
         for line in f:

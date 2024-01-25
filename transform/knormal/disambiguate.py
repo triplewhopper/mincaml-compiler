@@ -1,8 +1,8 @@
 from transform.knormal.language import KNormal
 from . import Lit
-from .language import Var, Ext, Get, Unary, App, Binary, Seq, Tuple, Put, If, Let, LetTuple, LetRec, Function, \
+from .language import Var, Get, Unary, App, Binary, Seq, Tuple, Put, If, Let, LetTuple, LetRec, Function, \
     KNormal, LetBinding
-from id import Id, GlobalId
+from id import Id
 from ty import Ty, TyFun
 from withbounds import WithBounds
 from .. import bind_logger
@@ -13,21 +13,21 @@ get_adapter = bind_logger(logger=logging.getLogger(__name__))
 
 class Disambiguate:
 
-    def __init__(self, known_ext_funcs: dict[TyFun, set[GlobalId]]):
+    def __init__(self, known_ext_funcs: dict[TyFun, set[Id]]):
         _disambiguate_env: dict[str, set[TyFun]] = {}
-        self._rename_env = dict[Id, GlobalId]()
+        self._rename_env = dict[Id, Id]()
         for ftype, funcs in known_ext_funcs.items():
             for func in funcs:
                 _disambiguate_env.setdefault(func.val.val, set()).add(ftype)
         _disambiguate_env2: dict[str, list[TyFun]] = {k: list(v) for k, v in _disambiguate_env.items()}
         for ftype, funcs in known_ext_funcs.items():
-            removes: list[GlobalId] = []
-            adds: list[GlobalId] = []
+            removes: list[Id] = []
+            adds: list[Id] = []
             for func in funcs:
                 ftypes = _disambiguate_env2[func.val.val]
                 if len(ftypes) > 1:
                     removes.append(func)
-                    new_name = GlobalId(WithBounds(func.val.val + str(ftypes.index(ftype)), func.bounds))
+                    new_name = Id(WithBounds(func.val.val + str(ftypes.index(ftype)), func.bounds))
                     adds.append(new_name)
                     self._rename_env[func] = new_name
             for r in removes:

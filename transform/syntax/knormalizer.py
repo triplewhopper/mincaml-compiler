@@ -1,19 +1,15 @@
-import contextlib
 import logging
 from collections.abc import Callable
-from collections import ChainMap
 
-import transform.knormal as kn
-from .visitor import ExprVisitor
+import transform.knormal.language as kn
 from .infer import Monomorphization
-from .language import Expr, Lit, Var, Get, Unary, App, Binary, Semi, Tuple, Put, If, Let, LetRec, LetTuple, DeclRec, \
+from .language import Expr, LitU, LitB, LitI, LitF, Var, Get, Unary, App, Binary, Semi, Tuple, Put, If, Let, LetRec, LetTuple, DeclRec, \
     Decl, TopLevel, Function, LetBinding
-from .errors import ExternalVariableTypeError
-from withbounds import WithBounds as WBs
+# from withbounds import WithBounds as WBs
 from ty import TyFun, TyArray, TyTuple, TyInt, TyBool, Ty
-from id import Id, LocalId, GlobalId, TmpId, tmp_id_factory
+from id import Id
 from .. import bind_logger
-from typing import TypeVar, overload, Literal
+from typing import TypeVar
 
 get_adapter = bind_logger(logger=logging.getLogger(__name__))
 
@@ -21,25 +17,25 @@ T = TypeVar('T', bound=Ty)
 K = kn.KNormal[Ty]
 
 def insert_let(kn1: K, k: Callable[[Id], kn.KNormal[T]]) -> kn.KNormal[T]:
-    if isinstance(kn1, kn.Ext):
+    # if isinstance(kn1, kn.Ext):
+    #     return k(kn1.name)
+    if isinstance(kn1, kn.Var):
         return k(kn1.name)
-    elif isinstance(kn1, kn.Var):
-        return k(kn1.name)
-    x = next(tmp_id_factory)
-    x.bounds = kn1.bounds
-    with get_adapter(bounds=kn1.bounds) as adapter:
-        adapter.info(f"generated fresh variable '%s' : '%s'. ", x, kn1.typ)
+    x = Id()
+    # x.bounds = kn1.bounds
+    # with get_adapter(bounds=kn1) as adapter:
+    #     adapter.info(f"generated fresh variable '%s' : '%s'. ", x, kn1.typ)
     kn2 = k(x)
-    assert kn1.bounds.issubset(kn2.bounds)
-    return kn.Let(kn.LetBinding(x, kn1, bounds=kn1.bounds), kn2, bounds=kn2.bounds)
+    # assert kn1.bounds.issubset(kn2.bounds)
+    return kn.Let(kn.LetBinding(x, kn1, is_tmp=True), kn2)
 
 
-class KNormalizer(ExprVisitor[K]):
-    def __init__(self, mono: Monomorphization, funcs: dict[WBs[str], TyFun]):
-        self.defs = ChainMap[str, WBs[str]]()
+class KNormalizer:
+    def __init__(self, mono: Monomorphization, funcs: dict[Id, TyFun]):
+        # self.defs = ChainMap[str, WBs[str]]()
         self._mono = mono
-        self._known_ext_funcs: dict[TyFun, set[GlobalId]] = {}  # prepared for closure conversion
-        self._known_global_vars: dict[Ty, set[GlobalId]] = {}  # prepared for ir emission
+        self._known_ext_funcs: dict[TyFun, set[Id]] = {}  # prepared for closure conversion
+        self._known_global_vars: dict[Ty, set[Id]] = {}  # prepared for ir emission
         self._funcs = funcs.copy()
 
     @property
@@ -58,43 +54,75 @@ class KNormalizer(ExprVisitor[K]):
         """
         return self._known_global_vars
 
-    @contextlib.contextmanager
-    def _new_child_defs(self, defs: dict[str, WBs[str]]):
-        self.defs = self.defs.new_child(defs)
-        try:
-            yield
-        finally:
-            self.defs = self.defs.parents
+    # @contextlib.contextmanager
+    # def _new_child_defs(self, defs: dict[str, WBs[str]]):
+    #     self.defs = self.defs.new_child(defs)
+    #     try:
+    #         yield
+    #     finally:
+    #         self.defs = self.defs.parents
 
-    def visit(self, node: Expr):
-        x = super().visit(node)
-        assert x.bounds == node.bounds
-        return x
-
-    def visit_Lit(self, node: Lit):
-        return kn.Lit(node.lit)
+    def visit(self, node: Expr) -> K:
+        match node:
+            case LitU():
+                res = kn.LitU(node.metadata)
+            case LitB():
+                res = kn.LitB(node.metadata, node.lit)
+            case LitI():
+                res = kn.LitI(node.metadata, node.lit)
+            case LitF():
+                res = kn.LitF(node.metadata, node.lit)
+            case Var():
+                res = self.visit_Var(node)
+            case Get():
+                res = self.visit_Get(node)
+            case Unary():
+                res = self.visit_Unary(node)
+            case App():
+                res = self.visit_App(node)
+            case Binary():
+                res = self.visit_Binary(node)
+            case Semi():
+                res = self.visit_Semi(node)
+            case Tuple():
+                res = self.visit_Tuple(node)
+            case Put():
+                res = self.visit_Put(node)
+            case If():
+                res = self.visit_If(node)
+            case Let():
+                res = self.visit_Let(node)
+            case LetTuple():
+                res = self.visit_LetTuple(node)
+            case LetRec():
+                res = self.visit_LetRec(node)
+            case _:
+                raise NotImplementedError(node)
+        return res
 
     def visit_Var(self, node: Var):
-        if node.name.val in self.defs:
-            if node.name.val not in ChainMap(*self.defs.maps[:-1]):
-                return kn.Var(GlobalId(node.name, self.defs[node.name.val]),
-                              typ=self._mono.visit(node.ty0.result())[0])
-            return kn.Var(LocalId(node.name, self.defs[node.name.val]), typ=self._mono.visit(node.ty0.result())[0])
-        else:
-            ty, _ = self._mono.visit(node.ty0.result())
+        typ = self._mono.visit(node.ty0.result())[0]
+        return kn.Var(node.name, typ=typ)
+        # if node.name.val in self.defs:
+        #     if node.name.val not in ChainMap(*self.defs.maps[:-1]):
+        #         return kn.Var(GlobalId(node.name, self.defs[node.name.val]),
+        #                       typ=self._mono.visit(node.ty0.result())[0])
+        #     return kn.Var(LocalId(node.name, self.defs[node.name.val]), typ=self._mono.visit(node.ty0.result())[0])
+        # else:
+            # ty, _ = self._mono.visit(node.ty0.result())
             # if isinstance(ty, (TyArray, TyTuple)):
             #     res = kn.Ext(ExtId(node.name), typ=ty)
             #     self._known_global_vars.setdefault(ty, set()).add(res.name)
             #     return res
             # el
-            if isinstance(ty, TyFun):
-                res = kn.Ext(GlobalId(node.name), typ=ty)
-                self._known_ext_funcs.setdefault(ty, set()).add(res.name)
-                return res
-            else:
-                with get_adapter(bounds=node.bounds) as adapter:
-                    adapter.error(f"external variable '{node}' does not have function type (got {ty})")
-                raise ExternalVariableTypeError(node)
+            # if isinstance(ty, TyFun):
+            #     res = kn.Ext(GlobalId(node.name), typ=ty)
+            #     self._known_ext_funcs.setdefault(ty, set()).add(res.name)
+            #     return res
+            # else:
+            #     with get_adapter(bounds=node.bounds) as adapter:
+            #         adapter.error(f"external variable '{node}' does not have function type (got {ty})")
+            #     raise ExternalVariableTypeError(node)
 
     def visit_Get(self, node: Get):
         array = self.visit(node.e1)
@@ -104,8 +132,8 @@ class KNormalizer(ExprVisitor[K]):
 
             def k2(i: Id):
                 assert isinstance(array.typ, TyArray) and isinstance(index.typ, TyInt)
-                assert isinstance(i, (LocalId, TmpId))
-                return kn.Get(a, i, typ=array.typ.elem, bounds=node.bounds)
+                assert isinstance(i, Id) and isinstance(a, Id)
+                return kn.Get(a, i, typ=array.typ.elem)
 
             return insert_let(index, k2)
 
@@ -115,9 +143,9 @@ class KNormalizer(ExprVisitor[K]):
         e = self.visit(node.e)
 
         def k(x: Id):
-            assert isinstance(x, (LocalId, TmpId))
+            assert isinstance(x, Id) and node.op in ('-', '-.')
             op = kn.Unary.resolve_overloading(node.op, e.typ)
-            return kn.Unary(op, x, bounds=node.bounds)
+            return kn.Unary(op, x, metadata=node.metadata)
 
         return insert_let(e, k)
 
@@ -130,7 +158,7 @@ class KNormalizer(ExprVisitor[K]):
                     assert isinstance(callee.typ, TyFun)
                     assert len(callee.typ.args) == len(xs)
                     assert all(k.typ == t for (_, k), t in zip(xs, callee.typ.args))
-                    return kn.App(f, *(x for x, _ in xs), typ=callee.typ.ret, bounds=node.bounds)
+                    return kn.App(f, *(x for x, _ in xs), typ=callee.typ.ret)
 
                 kn0 = self.visit(es[i])
 
@@ -151,8 +179,9 @@ class KNormalizer(ExprVisitor[K]):
 
         def k1(x1: Id):
             def k2(x2: Id):
+
                 op = kn.Binary.resolve_overloading(node.op, e1.typ)
-                return kn.Binary(op, x1, x2, bounds=node.bounds)
+                return kn.Binary(op, x1, x2, metadata=node.metadata)
 
             return insert_let(e2, k2)
 
@@ -164,7 +193,7 @@ class KNormalizer(ExprVisitor[K]):
     def visit_Tuple(self, node: Tuple):
         def bind(xs: list[tuple[Id, K]], es: tuple[Expr, ...], i: int) -> K:
             if i == len(es):
-                return kn.Tuple(*(x for x, _ in xs), typ=TyTuple(k.typ for _, k in xs), bounds=node.bounds)
+                return kn.Tuple(*(x for x, _ in xs), typ=TyTuple(k.typ for _, k in xs))
             kn_i = self.visit(es[i])
 
             def k2(x: Id):
@@ -185,10 +214,9 @@ class KNormalizer(ExprVisitor[K]):
                 value = self.visit(node.e3)
 
                 def k3(v: Id):
-                    assert isinstance(array.typ, TyArray)
-                    assert isinstance(index.typ, TyInt)
+                    assert isinstance(array.typ, TyArray) and isinstance(index.typ, TyInt)
                     assert array.typ.elem == value.typ
-                    return kn.Put(a, i, v, bounds=node.bounds)
+                    return kn.Put(a, i, v)
 
                 return insert_let(value, k3)
 
@@ -202,71 +230,49 @@ class KNormalizer(ExprVisitor[K]):
 
         def k1(c: Id):
             br_true, br_false = self.visit(node.e2), self.visit(node.e3)
-            return kn.If(c, br_true, br_false, bounds=node.bounds)
+            return kn.If(c, br_true, br_false)
 
         return insert_let(cond, k1)
 
     def visit_LetBinding(self, b: LetBinding, is_global: bool =False) -> kn.LetBinding:
-        if not is_global:
-            return kn.LetBinding(LocalId(b.var, b.var), self.visit(b.e1), bounds=b.bounds)
-        return kn.LetBinding(GlobalId(b.var, b.var), self.visit(b.e1), bounds=b.bounds)
+        return kn.LetBinding(b.var.name, self.visit(b.e1))
 
     def visit_Let(self, node: Let):
         binding = self.visit_LetBinding(node.binding)
-        with self._new_child_defs({node.binding.var.val: node.binding.var}):  # shadowing
-            kn2 = self.visit(node.e2)
-
-        return kn.Let(binding, kn2, bounds=node.bounds)
+        kn2 = self.visit(node.e2)
+        return kn.Let(binding, kn2)
 
     def visit_LetTuple(self, node: LetTuple):
         kn1 = self.visit(node.e1)
 
         def k1(y: Id):
-            self.defs = self.defs.new_child({x.val: x for x in node.xs})
             kn2 = self.visit(node.e2)
-            self.defs = self.defs.parents
             assert isinstance(kn1.typ, TyTuple) and len(kn1.typ.elems) == len(node.xs)
-            xs = tuple(LocalId(x, x) for x in node.xs)
-            return kn.LetTuple(xs, kn1.typ.elems, y, kn2, bounds=node.bounds)
+            xs = tuple(x.name for x in node.xs)
+            return kn.LetTuple(xs, kn1.typ.elems, y, kn2)
 
         return insert_let(kn1, k1)
+
     
-    @overload
-    def visit_Function(self, f: Function, is_global: Literal[False]=...) -> kn.Function[LocalId]:
-        ...
-    @overload
-    def visit_Function(self, f: Function, is_global: Literal[True]) -> kn.Function[GlobalId]:
-        ...
-    
-    def visit_Function(self, f: Function, is_global: bool=False) -> kn.Function[LocalId | GlobalId]:
-        assert f.funct in self._funcs
-        func_type = self._funcs[f.funct]
+    def visit_Function(self, f: Function, is_global: bool=False) -> kn.Function:
+        assert f.funct.name in self._funcs
+        func_type = self._funcs[f.funct.name]
         assert len(func_type.args) == len(f.formal_args)
-        formal_args = tuple(LocalId.create_definition(x) for x in f.formal_args)
-        if is_global:
-            self.defs[f.funct.val] = f.funct
-            with self._new_child_defs({x.val: x for x in f.formal_args}):
-                body = self.visit(f.e1)
-            funct = GlobalId(f.funct, f.funct)
-        else:
-            with self._new_child_defs({f.funct.val: f.funct}):
-                self.defs.update({x.val: x for x in f.formal_args})
-                body = self.visit(f.e1)
-            funct = LocalId(f.funct, f.funct)
-            
-        return kn.Function(funct, formal_args, body, typ=func_type, bounds=f.bounds)
+        formal_args = tuple(x.name for x in f.formal_args)
+        body = self.visit(f.e1)
+        funct = f.funct.name
+        return kn.Function(funct, formal_args, body, typ=func_type)
 
     def visit_LetRec(self, node: LetRec):
         kn_func = self.visit_Function(node.f)
-        with self._new_child_defs({node.f.funct.val: node.f.funct}):
-            kn_e = self.visit(node.e2)
-        return kn.LetRec(kn_func, kn_e, bounds=node.bounds)
+        kn_e = self.visit(node.e2)
+        return kn.LetRec(kn_func, kn_e)
 
 
 class KNormalizerTopLevel:
     def __init__(self, expr_visitor: KNormalizer):
         self.expr_visitor = expr_visitor
-        self.seq: dict[str, WBs[list[K | kn.LetBinding | kn.Function[GlobalId]]]] = {}
+        self.seq: dict[str, list[K | kn.LetBinding | kn.Function]] = {}
 
     @property
     def known_ext_funcs(self):
@@ -277,37 +283,32 @@ class KNormalizerTopLevel:
         return self.expr_visitor.known_global_vars
 
     def visit_Decl(self, decl: Decl):
-        assert len(self.expr_visitor.defs.maps) == 1
         kn1 = self.expr_visitor.visit_LetBinding(decl.binding, is_global=True)
-        assert isinstance(kn1.lhs, GlobalId)
         self.expr_visitor.known_global_vars.setdefault(kn1.rhs.typ, set()).add(kn1.lhs)
-        self.expr_visitor.defs[decl.binding.var.val] = decl.binding.var
-        self.seq[decl.bounds.filepath].val.append(kn1)
+        return kn1
 
     def visit_DeclRec(self, decl: DeclRec):
         kn_func = self.expr_visitor.visit_Function(decl.f, is_global=True)
-        assert isinstance(kn_func.funct, GlobalId)
         self.expr_visitor.known_global_vars.setdefault(kn_func.typ, set()).add(kn_func.funct)
-        self.expr_visitor.defs[decl.f.funct.val] = decl.f.funct
-        self.seq[decl.bounds.filepath].val.append(kn_func)
+        return kn_func
 
-    def visit_TopLevel(self, toplevel: TopLevel):
-        assert toplevel.bounds.filepath not in self.seq
-        self.seq[toplevel.bounds.filepath] = WBs([], toplevel.bounds)
+    def visit_TopLevel(self, filename: str, toplevel: TopLevel):
+        assert filename not in self.seq
+        self.seq[filename] = []
         for decl_or_expr in toplevel.decl_or_exprs:
             match decl_or_expr:
                 case Decl():
-                    self.visit_Decl(decl_or_expr)
+                    self.seq[filename].append(self.visit_Decl(decl_or_expr))
                 case DeclRec():
-                    self.visit_DeclRec(decl_or_expr)
+                    self.seq[filename].append(self.visit_DeclRec(decl_or_expr))
                 case _:
                     kn1 = self.expr_visitor.visit(decl_or_expr)
-                    self.seq[decl_or_expr.bounds.filepath].val.append(kn1)
+                    self.seq[filename].append(kn1)
 
 def knormalize(knormalizer: KNormalizerTopLevel, **kwargs: TopLevel):
-    kns: dict[str, list[kn.KNormal[Ty]| kn.LetBinding | kn.Function[GlobalId]]] = {}
+    kns: dict[str, list[kn.KNormal[Ty]| kn.LetBinding | kn.Function]] = {}
     for filename, ast in kwargs.items():
-        knormalizer.visit_TopLevel(ast)
-        kns[filename] = knormalizer.seq[filename].val
+        knormalizer.visit_TopLevel(filename, ast)
+        kns[filename] = knormalizer.seq[filename]
     
     return kns
