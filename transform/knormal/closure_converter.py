@@ -1,9 +1,7 @@
-import contextlib
-from collections import ChainMap
 from transform.knormal import KNormal, LitU, LitI, LitB, LitF, Var, Get, Unary, App, Binary, Seq, Tuple, Put, If, Let, LetTuple, \
     LetRec, Function, LetBinding
 
-from ty import TyTuple, TyFun, Ty, T
+from ty import TyTuple, Ty, T
 from id import Id
 import transform.closure as cl
 import logging
@@ -26,7 +24,7 @@ class ClosureConverter:
 
     def __init__(self, known: dict[Id, Ty]):
         self.env: dict[Id, Ty] = {}
-        self.known: set[Id] = set(known)
+        self.known: dict[Id, cl.Function | None] = {k: None for k in known}
         self.global_vars: dict[Id, Ty] = {}
         self.toplevel_funcs: list[cl.Function] = []
 
@@ -38,8 +36,7 @@ class ClosureConverter:
     #     finally:
     #         self.env = self.env.parents
 
-    def convert(self, *es: KNormal[Ty] | Function | LetBinding) \
-            -> tuple[list[cl.Function], list[cl.Exp[Ty] | cl.Cls | cl.LetBinding]]:
+    def convert(self, *es: KNormal[Ty] | Function | LetBinding) -> tuple[list[cl.Function], list[cl.Exp[Ty] | cl.Cls | cl.LetBinding]]:
         """
         Converts a KNormal expression into a list of functions and an expression.
         """
@@ -58,8 +55,7 @@ class ClosureConverter:
                     self.env[funct] = func.typ
                     # self.global_vars.add(funct)
                     rest = list(deal(i + 1))
-                    fv_rest = fv(*rest)
-                    if funct in fv_rest:
+                    if funct in fv(*rest):
                         yield cl.Cls(func, tuple(zs))
                     yield from rest
 
@@ -68,11 +64,9 @@ class ClosureConverter:
                     rhs = self.visit(b.rhs, name=b.lhs)
                     self.env[b.lhs] = rhs.typ
                     self.global_vars[b.lhs] = rhs.typ
-                    yield cl.LetBinding(b, rhs)
+                    yield cl.LetBinding(b.lhs, rhs, b.is_tmp)
                     yield from deal(i + 1)
 
-                case e:
-                    raise TypeError(e)
         b = list(deal(0))
         return self.toplevel_funcs.copy(), b
 
@@ -87,21 +81,21 @@ class ClosureConverter:
             case LitF():
                 return cl.LitF(e)
             case Var():
-                return cl.Var(e)
+                return cl.Var(e.name, e.typ)
             case Get():
-                return cl.Get(e)
+                return cl.Get(e.array, e.index, e.typ)
             case Unary():
-                return cl.Unary(e)
+                return cl.Unary(e.op, e.y)
             case App():
                 return self.visit_App(e)
             case Binary():
-                return cl.Binary(e)
+                return cl.Binary(e.op, e.y1, e.y2)
             case Seq():
                 return self.visit_Seq(e, name=name)
             case Tuple():
                 return self.visit_Tuple(e, name=name)
             case Put():
-                return cl.Put(e)
+                return cl.Put(e.array, e.index, e.value)
             case If():
                 return self.visit_If(e)
             case Let():
@@ -123,12 +117,16 @@ class ClosureConverter:
 
 
     def visit_App(self, node: App):
-        if node.callee in self.known:
-            # with get_adapter(bounds=node.callee.bounds) as adapter:
-            #     adapter.info(f"directly applying function '{node.callee}'")
-            return cl.AppDir(node)
-        else:
-            return cl.AppCls(node)
+        try:
+            match self.known[node.callee]:
+                case None:
+                    return cl.AppDir(node.callee, node.args, node.typ)
+                case f:
+                    # with get_adapter(bounds=node.callee.bounds) as adapter:
+                    #     adapter.info(f"directly applying function '{node.callee}'")
+                    return cl.AppDir(node.callee, node.args, node.typ)
+        except KeyError:
+            return cl.AppCls(node.callee, node.args, node.typ)
 
     def visit_Seq(self, node: Seq, /, *, name: Id | None = None):
         xs: list[cl.Exp[Ty]] = []
@@ -140,24 +138,25 @@ class ClosureConverter:
         return cl.Seq(*xs)
 
     def visit_Tuple(self, node: Tuple, /, *, name: Id | None = None):
-        x = cl.Tuple(node)
+        x = cl.Tuple(node.ys, node.typ)
         x.name = name
         return x
 
     def visit_Put(self, node: Put, _):
-        return cl.Put(node)
+        return cl.Put(node.array, node.index, node.value)
 
     def visit_If(self, node: If, /):
         b1 = self.visit(node.br_true)
         b2 = self.visit(node.br_false)
 
-        return cl.If(node, b1, b2)
+        return cl.If(node.cond, b1, b2)
 
     def visit_Let(self, node: Let[Ty], /, *, name: Id | None = None) -> cl.Let[Ty]:
         rhs = self.visit(node.binding.rhs, name=node.binding.lhs)
         self.env.update({node.binding.lhs: rhs.typ})
         expr = self.visit(node.expr, name=name)
-        return cl.Let(node, rhs, expr)
+        binding = cl.LetBinding(node.binding.lhs, rhs, node.binding.is_tmp)
+        return cl.Let(binding, expr)
 
     def visit_LetTuple(self, node: LetTuple[T], /, *, name: Id | None = None):
         assert node.y in self.env
@@ -166,7 +165,7 @@ class ClosureConverter:
         self.env.update(zip(node.xs, node.ts))
         e = self.visit(node.e, name=name)
         # self.env = self.env.parents
-        return cl.LetTuple(node, e)
+        return cl.LetTuple(node.xs, node.ts, node.y, e)
 
     def visit_Function(self, f: Function) -> tuple[cl.Function, list[Id]]:
         toplevel_backup = self.toplevel_funcs.copy()
@@ -174,14 +173,15 @@ class ClosureConverter:
         assert f.funct not in self.env or self.env[f.funct] == f.typ
         self.env[f.funct] = f.typ
         self.env.update(f.iter_args())
-        self.known.add(f.funct)
+        self.known[f.funct] = None
+
         body1 = self.visit(f.body)
 
         zs = fv(body1).difference(f.formal_args).difference(self.global_vars)
 
         if len(zs) > 0:
-            def quoted(x: str):
-                return f"'{x}'"
+            # def quoted(x: str):
+            #     return f"'{x}'"
 
             # with get_adapter(bounds=f.bounds) as adapter:
             #     adapter.info(
@@ -189,7 +189,7 @@ class ClosureConverter:
             #         f"function {f.funct} cannot be directly applied in fact.")
 
             self.toplevel_funcs = toplevel_backup
-            self.known.remove(f.funct)
+            del self.known[f.funct]
             body1 = self.visit(f.body)
 
         zs = list(fv(body1).difference({f.funct}.union(f.formal_args).union(self.global_vars)))
@@ -204,10 +204,10 @@ class ClosureConverter:
         func, zs = self.visit_Function(node.f)
         # with self.new_child_env({node.f.funct: func.typ}):
         assert node.f.funct in self.env and self.env[node.f.funct] == func.typ
-        self.env[node.f.funct] = func.typ
+        # self.env[node.f.funct] = func.typ
         e2 = self.visit(node.e, name=name)
         if node.f.funct in fv(e2):
-            return cl.MakeCls(node, cl.Cls(func, tuple(zs)), e2)
+            return cl.MakeCls(cl.Cls(func, tuple(zs)), e2)
         else:
             # with get_adapter(bounds=node.f.funct.bounds) as adapter:
             #     adapter.info(f"eliminating closure {node.f.funct}")

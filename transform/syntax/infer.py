@@ -1,10 +1,11 @@
 import logging
-from .language import Expr, LitU, LitB, LitI, LitF, Var, Get, Unary, App, Binary, Semi, Tuple, Put, If, Let, LetRec, LetTuple, Decl, \
+from .language import Expr, LitU, LitB, LitI, LitF, Var, Get, Unary, App, Binary, Semi, Tuple, Put, If, Let, LetRec, \
+    LetTuple, Decl, \
     DeclRec, \
     TopLevel, Function
 from ty0 import TyCon, TyVar, Ty0, is_ty0
 from ty0 import ty0_int, ty0_float, ty0_bool, ty0_unit, ty0_fun, ty0_array, ty0_tuple
-from metadata import DILocation, DIVariable, DIIntrinsics
+from metadata import DILocation, DIVariable
 from id import Id
 from .. import bind_logger
 
@@ -34,6 +35,7 @@ class RecursiveType(InferError):
     def dump(self):
         return f"{self.t} occurs in {self.ty}"
 
+
 class NoInstance(InferError):
     def __init__(self, name: str, ty: Ty0):
         self.name = name
@@ -42,6 +44,7 @@ class NoInstance(InferError):
 
     def dump(self):
         return f"cannot find an instance of {self.name} '{self.ty}'"
+
 
 class UnionFind:
     def __init__(self):
@@ -61,11 +64,10 @@ class UnionFind:
         self._parent[t] = f = self.find(self._parent[t])
         return f
 
-    def merge(self, t1: Ty0, t2: Ty0):
+    def merge(self, t1: Ty0, t2: Ty0, /):
         t1 = self.find(t1)
         t2 = self.find(t2)
-        assert self._parent[t1] == t1
-        assert self._parent[t2] == t2
+        assert self._parent[t1] == t1 and self._parent[t2] == t2
         if t1 == t2:
             return
         rp1, rp2 = self._rp.get(t1), self._rp.get(t2)
@@ -118,14 +120,16 @@ class UnionFind:
                     return self.occurs_in(t1, t)
 
     def __str__(self):
-        families: dict[Ty0, list[Ty0]] = {}
+        from collections import defaultdict
+        families = defaultdict[Ty0, list[Ty0]]()
         for t in self._parent:
             f = self.find(t)
-            families.setdefault(f, []).append(t)
+            families[f].append(t)
+        
         for v in families.values():
             v.sort(key=lambda t: -100 if isinstance(t, TyCon) else 0)
         return "\n".join(
-            f"{f}: {', '.join(str(t) for t in families[f])}" for f in families
+            f"{f}: {', '.join(map(str, families[f]))}" for f in families
         )
 
     def check(self):
@@ -224,7 +228,7 @@ class TypingExpr:
     #     finally:
     #         self.env = self.env.parents
 
-    def unify(self, t1: Ty0, t2: Ty0):
+    def unify(self, t1: Ty0, t2: Ty0, /):
         t1, t2 = self.uf.find(t1), self.uf.find(t2)
         t1, t2 = self.uf.rp(t1) or t1, self.uf.rp(t2) or t2
         match t1, t2:
@@ -240,7 +244,7 @@ class TypingExpr:
             case _:
                 raise UnifyError(t1, t2)
 
-    def visit(self, node: Expr, expected: Ty0 | None = None) -> Ty0:
+    def visit(self, node: Expr, /, expected: Ty0 | None = None) -> Ty0:
         try:
             match node:
                 case LitU():
@@ -256,9 +260,10 @@ class TypingExpr:
                         a = TyVar()
                         res = ty0_fun(ty0_int, a, ty0_array(a))
                         self.array_makes[node.name] = res
+                        self.di_vars[node.name] = node.metadata
                         node.ty0.set_result(res)
                     else:
-                        node.ty0.set_result(res:=self.env[node.name])
+                        node.ty0.set_result(res := self.env[node.name])
                 case Get():
                     res = self.visit_Get(node)
                 case Unary():
@@ -285,9 +290,9 @@ class TypingExpr:
                     raise NotImplementedError(node)
             if expected is not None:
                 self.unify(res, expected)
-            
+
             res = self.uf.apply(res)
-                
+
         except (UnifyError, RecursiveType) as e:
             if not e.reraised:
                 e.reraised = True
@@ -295,7 +300,6 @@ class TypingExpr:
                     adapter.error(e.dump())
             raise e
         return res
-
 
     # def visit_Var(self, node: Var) -> Ty0:
     #     try:
@@ -320,7 +324,7 @@ class TypingExpr:
         self.visit(node.e2, ty0_int)
         return a
 
-    def visit_Unary(self, node: Unary) -> Ty0:
+    def visit_Unary(self, node: Unary, /) -> Ty0:
         match node.op:
             case '-':
                 t = self.visit(node.e)
@@ -330,14 +334,14 @@ class TypingExpr:
                 return self.visit(node.e, ty0_float)
             case _:
                 raise NotImplementedError(node.op)
-            
-    def visit_App(self, node: App) -> Ty0:
-        ty_args = [self.visit(e) for e in node.args]   
+
+    def visit_App(self, node: App, /) -> Ty0:
+        ty_args = [self.visit(e) for e in node.args]
         ty_ret = TyVar()
         _ = self.visit(node.callee, ty0_fun(*ty_args, ty_ret))
         return ty_ret
 
-    def visit_Binary(self, node: Binary) -> Ty0:
+    def visit_Binary(self, node: Binary, /) -> Ty0:
         match node.op:
             case '+' | '-' | '*' | '/':
                 t1 = self.visit(node.e1)
@@ -361,34 +365,34 @@ class TypingExpr:
             case _:
                 raise NotImplementedError(node.op)
 
-    def visit_Semi(self, node: Semi) -> Ty0:
+    def visit_Semi(self, node: Semi, /) -> Ty0:
         for e in node.es[:-1]:
             self.visit(e, ty0_unit)
         return self.visit(node.es[-1])
 
-    def visit_Tuple(self, node: Tuple) -> TyCon:
+    def visit_Tuple(self, node: Tuple, /) -> TyCon:
         return ty0_tuple(*[self.visit(e) for e in node.es])
 
-    def visit_Put(self, node: Put) -> TyCon:
+    def visit_Put(self, node: Put, /) -> TyCon:
         self.visit(node.e2, ty0_int)
         t3 = self.visit(node.e3)
         self.visit(node.e1, ty0_array(t3))
         return ty0_unit
 
-    def visit_If(self, node: If) -> Ty0:
+    def visit_If(self, node: If, /) -> Ty0:
         self.visit(node.e1, ty0_bool)
         t2 = self.visit(node.e2)
         self.visit(node.e3, t2)
         return t2
 
-    def visit_Let(self, node: Let) -> Ty0:
+    def visit_Let(self, node: Let, /) -> Ty0:
         t1 = self.visit(node.binding.e1)
         self.env[node.binding.var.name] = t1
         self.di_vars[node.binding.var.name] = node.binding.var.metadata
         # with self._new_child_env({node.binding.var.val: t1}):
         return self.visit(node.e2)
 
-    def visit_Function(self, f: Function) -> Ty0:
+    def visit_Function(self, f: Function, /) -> Ty0:
         ty_args, ty_ret = [TyVar() for _ in f.formal_args], TyVar()
         ty_func = ty0_fun(*ty_args, ty_ret)
         assert f.funct.name not in self.funcs
@@ -396,13 +400,13 @@ class TypingExpr:
         self.di_vars[f.funct.name] = f.funct.metadata
         self.env[f.funct.name] = ty_func
         # with self._new_child_env({f.funct.val: ty_func}):
-            # if there is an argument that has the same name as the function, then the function itself is shadowed.
+        # if there is an argument that has the same name as the function, then the function itself is shadowed.
         self.env.update({x.name: t for x, t in zip(f.formal_args, ty_args)})
         self.di_vars.update({x.name: x.metadata for x in f.formal_args})
         self.visit(f.e1, ty_ret)
         return ty_func
 
-    def visit_LetRec(self, node: LetRec) -> Ty0:
+    def visit_LetRec(self, node: LetRec, /) -> Ty0:
         f, e2 = node.f, node.e2
         assert f.funct.name not in self.funcs
         self.funcs[f.funct.name] = ty_func = self.visit_Function(f)
@@ -411,7 +415,7 @@ class TypingExpr:
         # with self._new_child_env({f.funct.val: ty_func}):
         return self.visit(e2)
 
-    def visit_LetTuple(self, node: LetTuple):
+    def visit_LetTuple(self, node: LetTuple, /):
         ts = [TyVar() for _ in node.xs]
         self.visit(node.e1, ty0_tuple(*ts))
         self.env.update({x.name: t for x, t in zip(node.xs, ts)})
@@ -429,12 +433,11 @@ class Typing:
     def funcs(self):
         return self.expr_visitor.funcs
 
-    def infer(self, node: TopLevel) -> list[Ty0]:
+    def infer(self, node: TopLevel, /) -> list[Ty0]:
         ts = self.visit_TopLevel(node)
         ev = self.expr_visitor
         ev.uf.check()
-        
-            
+
         predicates: set[tuple[str, Ty0, DILocation]] = set()
         for name, ty, diloc in ev.predicates:
             try:
@@ -443,7 +446,7 @@ class Typing:
                 with get_adapter(bounds=diloc.get_bounds()) as adapter:
                     adapter.error(e.dump())
                 raise e
-            
+
             match name, ty:
                 case 'Num', TyCon('int' | 'float', _):
                     ...
@@ -460,10 +463,6 @@ class Typing:
             predicates.add((name, ty, diloc))
         ev.predicates = predicates
 
-        # for k in ev.ext:
-        #     v = ev.ext[k]
-        #     ev.ext[k] = v.apply_with(ev.uf)
-
         for f in ev.funcs:
             try:
                 ev.funcs[f] = ev.uf.apply(ev.funcs[f])
@@ -479,20 +478,16 @@ class Typing:
         ev.env[node.binding.var.name] = ev.visit(node.binding.e1)
         ev.di_vars[node.binding.var.name] = node.binding.var.metadata
 
-    def visit_DeclRec(self, node: DeclRec) -> None:
-        ev = self.expr_visitor
-        ev.visit_Function(node.f)
-
     def visit_TopLevel(self, node: TopLevel):
         ts: list[Ty0] = []
         for decl_or_expr in node.decl_or_exprs:
-            if isinstance(decl_or_expr, Decl):
-                self.visit_Decl(decl_or_expr)
-            elif isinstance(decl_or_expr, DeclRec):
-                self.visit_DeclRec(decl_or_expr)
-            else:
-                t = self.expr_visitor.visit(decl_or_expr, ty0_unit)
-                ts.append(t)
+            match decl_or_expr:
+                case Decl():
+                    self.visit_Decl(decl_or_expr)
+                case DeclRec():
+                    self.expr_visitor.visit_Function(decl_or_expr.f)
+                case _:
+                    ts.append(self.expr_visitor.visit(decl_or_expr, ty0_unit))
         return ts
 
 

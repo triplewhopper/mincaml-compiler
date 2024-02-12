@@ -156,8 +156,7 @@ class KNormalizer:
             def bind(xs: list[tuple[Id, K]], es: tuple[Expr, ...], i: int) -> K:
                 if i == len(es):
                     assert isinstance(callee.typ, TyFun)
-                    assert len(callee.typ.args) == len(xs)
-                    assert all(k.typ == t for (_, k), t in zip(xs, callee.typ.args))
+                    assert all(k.typ == t for (_, k), t in zip(xs, callee.typ.args, strict=True))
                     return kn.App(f, *(x for x, _ in xs), typ=callee.typ.ret)
 
                 kn0 = self.visit(es[i])

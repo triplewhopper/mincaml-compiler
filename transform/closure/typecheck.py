@@ -3,15 +3,16 @@ from transform.closure.language import Program, Exp, Function, Cls, LetBinding, 
 from ty import Ty, TyFun, TyUnit, TyInt, TyBool, TyFloat, TyTuple, TyArray
 from id import Id
 from collections import ChainMap
+from collections.abc import Mapping
 import contextlib
 import unittest
 
 
 class TypeCheck(unittest.TestCase):
-    def __init__(self, env: dict[Id, Ty]):
+    def __init__(self, builtins: Mapping[Id, Ty], globals: Mapping[Id, Ty]):
         super(TypeCheck, self).__init__()
-        self.env = ChainMap(env).new_child()
-        self.is_definitely_not_cls: set[Id] = set(env)
+        self.env = ChainMap(dict(globals), dict(builtins))
+        self.is_definitely_not_cls = set(self.env.keys())
 
     @contextlib.contextmanager
     def new_child_env(self, env: dict[Id, Ty]):
@@ -27,13 +28,13 @@ class TypeCheck(unittest.TestCase):
 
     def test_program(self, prog: Program):
         for f in prog.fns:
-            self.assertEqual(len(self.env.maps), 2, 'env should only have two maps: one for globals, one for builtins')
             self.assertNotIn(f.funct, self.env, f'function {f.funct} is already defined')
             self.env[f.funct] = f.typ
             if len(f.formal_fv) == 0:
                 self.is_definitely_not_cls.add(f.funct)
 
         for f in prog.fns:
+            self.assertEqual(len(self.env.maps), 2, 'env should only have two maps: one for globals, one for builtins')
             self.visit_Function(f)
 
         for e in prog.exp_or_cls_or_letbindings:
@@ -142,9 +143,8 @@ class TypeCheck(unittest.TestCase):
 
     def visit_Function(self, f: Function):
         self.assertIsInstance(f.typ, TyFun)
-        with self.new_child_env({f.funct: f.typ}):
-            self.assertEqual(len(f.formal_args), len(f.typ.args))
-            self.assertSetEqual(set(f.formal_args) & set(fv for fv, _ in f.formal_fv), set())
-            with self.new_child_env(dict(zip(f.formal_args, f.typ.args))):
-                self.env.update(dict(f.formal_fv))
-                self.assertEqual(self.visit(f.body), f.typ.ret)
+        self.assertEqual(len(f.formal_args), len(f.typ.args))
+        self.assertSetEqual(set(f.formal_args) & set(fv for fv, _ in f.formal_fv), set())
+        with self.new_child_env(dict(zip(f.formal_args, f.typ.args))):
+            self.env.update(dict(f.formal_fv))
+            self.assertEqual(self.visit(f.body), f.typ.ret)

@@ -5,3 +5,5 @@ from .fv import Fv
 from .emit import IREmitter
 from .flatten import Flatten
 from .typecheck import TypeCheck
+from .calc import Count, Select, LinearScan, AsmEmmiter, StackSlot
+from .inline import inline
