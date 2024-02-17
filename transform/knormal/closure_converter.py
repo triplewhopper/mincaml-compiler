@@ -8,7 +8,6 @@ import logging
 from .. import bind_logger
 from collections.abc import Generator
 
-# G = TypeVar("G", GlobalId, LocalId)
 
 get_adapter = bind_logger(logger=logging.getLogger(__name__))
 
@@ -109,13 +108,6 @@ class ClosureConverter:
             case _:
                 raise NotImplementedError(e)
 
-
-    # def visit_Ext(self, node: Ext, _):
-    #     if isinstance(node.typ, TyFun):
-    #         self.known.add(node.name)
-    #     return cl.Ext(node)
-
-
     def visit_App(self, node: App):
         try:
             match self.known[node.callee]:
@@ -212,32 +204,3 @@ class ClosureConverter:
             # with get_adapter(bounds=node.f.funct.bounds) as adapter:
             #     adapter.info(f"eliminating closure {node.f.funct}")
             return e2
-
-# class ClosureConverterTopLevel(KNormalVisitor[ClosureConverter]):
-#     def __init__(self, expr_visitor: ClosureConverter):
-#         super().__init__(expr_visitor)
-#
-#     def visit_Decl(self, decl: Decl):
-#         e = self.expr_visitor.visit(decl.e)
-#         assert len(self.expr_visitor.env.maps) == 1
-#         self.expr_visitor.env[decl.x] = decl.e.typ
-#         return cl.Decl(decl, e)
-#
-#     def visit_DeclRec(self, decl_rec: DeclRec):
-#         func, zs = self.expr_visitor.visit_Function(decl_rec.f)
-#         self.expr_visitor.env[decl_rec.f.funct] = func.typ
-#         return func, zs
-#
-#     def visit_TopLevel(self, toplevel: TopLevel) -> cl.Program:
-#         decls = []
-#         exprs = []
-#         for i, decl_or_expr in enumerate(toplevel.decl_or_exprs):
-#             if isinstance(decl_or_expr, DeclRec):
-#                 func, zs = self.visit_DeclRec(decl_or_expr)
-#                 if decl_or_expr.f.funct in fv(*toplevel.decl_or_exprs[i + 1:]):
-#                     decls.append(cl.Cls(func, tuple(zs)))
-#             elif isinstance(decl_or_expr, Decl):
-#                 decls.append(self.visit_Decl(decl_or_expr))
-#             else:
-#                 exprs.append(self.expr_visitor.visit(decl_or_expr))
-#         return cl.Program(tuple(decls), *exprs, bounds=toplevel.bounds)
