@@ -6,9 +6,8 @@ from id import Id
 from collections import ChainMap
 from collections.abc import Mapping, Sequence
 from opkinds import BinaryOpKind, UnaryOpKind
-from itertools import chain
 from functools import lru_cache
-from typing import ClassVar, Callable, LiteralString, Final, TypeGuard
+from typing import ClassVar, Callable, LiteralString, Final, TypeGuard, overload, Literal
 from dataclasses import dataclass, field, replace
 import contextlib
 
@@ -260,6 +259,11 @@ class PhyReg:
 
     def is_float(self):
         return self.name.startswith('f') and self.name != 'fp'
+    
+    def preserve_on_call(self):
+        return self.name in {
+            'sp', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 
+            'gp', 'fs0', 'fs1', 'fs2', 'fs3', 'fs4', 'fs5', 'fs6', 'fs7', 'fs8', 'fs9', 'fs10', 'fs11'}
 
 PhyReg.sp = PhyReg('sp')
 PhyReg.gp = PhyReg('gp')
@@ -269,6 +273,8 @@ StackSlot = NewType('StackSlot', int)
 
 class I: ...
 
+@dataclass
+class MSimuHalt(I): ...
 
 @dataclass
 class MCopy(I):
@@ -356,6 +362,16 @@ class MCin(I):
             return f'cin_float {self.dst!r}'
         return f'cin_int {self.dst!r}'
 
+@dataclass
+class MCout(I):
+    is_float: bool
+    src: Id | PhyReg
+
+    def __str__(self):
+        if self.is_float:
+            return f'cout_float {self.src!r}'
+        return f'cout_int {self.src!r}'
+
 
 @dataclass
 class MLoad(I):
@@ -412,6 +428,7 @@ class MStoreLo(I):
 @dataclass
 class MUnary(I):
     opcode: ClassVar[str]
+    is_float: ClassVar[tuple[bool, bool]]
     src: Id | PhyReg
     dst: Id | PhyReg = field(default_factory=Id)
 
@@ -422,6 +439,7 @@ class MUnary(I):
 @dataclass
 class MBinary(I):
     opcode: ClassVar[str]
+    is_float: ClassVar[tuple[bool, bool, bool]]
     src1: Id | PhyReg
     src2: Id | PhyReg
     dst: Id | PhyReg = field(default_factory=Id)
@@ -429,49 +447,85 @@ class MBinary(I):
     def __str__(self):
         return f'{self.opcode} {self.dst!r}, {self.src1!r}, {self.src2!r}'
 
+@dataclass
+class MTernary(I):
+    opcode: ClassVar[str]
+    is_float: ClassVar[tuple[bool, bool, bool, bool]]
+    src1: Id | PhyReg
+    src2: Id | PhyReg
+    src3: Id | PhyReg
+    dst: Id | PhyReg = field(default_factory=Id)
+
+    def __str__(self):
+        return f'{self.opcode} {self.dst!r}, {self.src1!r}, {self.src2!r}, {self.src3!r}'
 
 @dataclass
-class MNeg(MUnary): opcode: ClassVar[str] = 'neg'
-
-
-@dataclass
-class MNot(MUnary): opcode: ClassVar[str] = 'not'
-
+class MFMAdd(MTernary): 
+    opcode: ClassVar[str] = 'fmadd.s'
+    is_float = True, True, True, True
 
 @dataclass
-class MSeqz(MUnary): opcode: ClassVar[str] = 'seqz'
+class MNeg(MUnary): 
+    opcode: ClassVar[str] = 'neg'
+    is_float = False, False
 
 
-@dataclass
-class MSnez(MUnary): opcode: ClassVar[str] = 'snez'
-
-
-@dataclass
-class MFNeg(MUnary): opcode: ClassVar[str] = 'fneg.s'
-
-
-@dataclass
-class MFSqrt(MUnary): opcode: ClassVar[str] = 'fsqrt.s'
-
-
-@dataclass
-class MFAbs(MUnary): opcode: ClassVar[str] = 'fabs.s'
+# @dataclass
+# class MNot(MUnary): opcode: ClassVar[str] = 'not'
 
 
 @dataclass
-class MFCvtWS(MUnary): opcode: ClassVar[str] = 'fcvt.w.s'
+class MSeqz(MUnary): 
+    opcode: ClassVar[str] = 'seqz'
+    is_float = False, False
 
 
 @dataclass
-class MFCvtSW(MUnary): opcode: ClassVar[str] = 'fcvt.s.w'
+class MSnez(MUnary): 
+    opcode: ClassVar[str] = 'snez'
+    is_float = False, False
 
 
 @dataclass
-class MFMvWX(MUnary): opcode: ClassVar[str] = 'fmv.w.x'
+class MFNeg(MUnary): 
+    opcode: ClassVar[str] = 'fneg.s'
+    is_float = True, True
 
 
 @dataclass
-class MFMvXW(MUnary): opcode: ClassVar[str] = 'fmv.x.w'
+class MFSqrt(MUnary):
+    opcode: ClassVar[str] = 'fsqrt.s'
+    is_float = True, True
+
+
+@dataclass
+class MFAbs(MUnary):
+    opcode: ClassVar[str] = 'fabs.s'
+    is_float = True, True
+
+
+@dataclass
+class MFCvtWS(MUnary):
+    opcode: ClassVar[str] = 'fcvt.w.s'
+    is_float = True, False
+
+
+@dataclass
+class MFCvtSW(MUnary): 
+    opcode: ClassVar[str] = 'fcvt.s.w'
+    is_float = False, True
+
+
+@dataclass
+class MFMvWX(MUnary): 
+    opcode: ClassVar[str] = 'fmv.w.x'
+    is_float = False, True
+
+
+@dataclass
+class MFMvXW(MUnary):
+    opcode: ClassVar[str] = 'fmv.x.w'
+    is_float = True, False
 
 
 @dataclass
@@ -563,60 +617,58 @@ class MCallIntrinsic(I):
 
 @dataclass
 class MRet(I):
-    # is_float: list[bool]
-    # src: list[Id | PhyReg] = field(default_factory=list)
-
-    # def __post_init__(self):
-    #     assert len(self.is_float) == len(self.src)
-
     def __str__(self):
-        # if self.src:
-        #     return f'ret {", ".join(map(repr, self.src))}'
         return 'ret'
 
 
 @dataclass
 class Nop(I): ...
 
+@dataclass
+class MBinaryInt(MBinary): is_float = False, False, False
 
 @dataclass
-class MAdd(MBinary): opcode: ClassVar[str] = 'add'
-
-
-@dataclass
-class MSub(MBinary): opcode: ClassVar[str] = 'sub'
-
+class MBinaryFloat(MBinary): is_float = True, True, True
 
 @dataclass
-class MMul(MBinary): opcode: ClassVar[str] = 'mul'
+class MAdd(MBinaryInt): opcode: ClassVar[str] = 'add'
 
 
 @dataclass
-class MDiv(MBinary): opcode: ClassVar[str] = 'div'
+class MSub(MBinaryInt): opcode: ClassVar[str] = 'sub'
 
 
 @dataclass
-class MXor(MBinary): opcode: ClassVar[str] = 'xor'
+class MMul(MBinaryInt): opcode: ClassVar[str] = 'mul'
 
 
 @dataclass
-class MFAdd(MBinary): opcode: ClassVar[str] = 'fadd.s'
+class MDiv(MBinaryInt): opcode: ClassVar[str] = 'div'
 
 
 @dataclass
-class MFSub(MBinary): opcode: ClassVar[str] = 'fsub.s'
+class MXor(MBinaryInt): opcode: ClassVar[str] = 'xor'
 
-
-@dataclass
-class MFMul(MBinary): opcode: ClassVar[str] = 'fmul.s'
 
 
 @dataclass
-class MFDiv(MBinary): opcode: ClassVar[str] = 'fdiv.s'
+class MFAdd(MBinaryFloat): opcode: ClassVar[str] = 'fadd.s'
 
 
 @dataclass
-class MCmp(MBinary): ...
+class MFSub(MBinaryFloat): opcode: ClassVar[str] = 'fsub.s'
+
+
+@dataclass
+class MFMul(MBinaryFloat): opcode: ClassVar[str] = 'fmul.s'
+
+
+@dataclass
+class MFDiv(MBinaryFloat): opcode: ClassVar[str] = 'fdiv.s'
+
+
+@dataclass
+class MCmp(MBinary): is_float = False, False, False
 
 
 @dataclass
@@ -636,7 +688,7 @@ class MLe(MCmp): ...
 
 
 @dataclass
-class MFCmp(MBinary): ...
+class MFCmp(MBinary): is_float = True, True, False
 
 
 @dataclass
@@ -685,6 +737,14 @@ class MSrai(MBinaryImm):
 @dataclass
 class MAddi(MBinaryImm):
     opcode: ClassVar[str] = 'addi'
+
+
+    def __post_init__(self):
+        assert -2048 <= self.imm < 2048
+
+@dataclass 
+class MXori(MBinaryImm):
+    opcode: ClassVar[str] = 'xori'
 
     def __post_init__(self):
         assert -2048 <= self.imm < 2048
@@ -831,7 +891,8 @@ class Select:
             self.functions[k] = am = self.select_array_make(k, v)
             self.functions[am.funct] = am
             global_val[k] = am.funct,
-            global_val_addr[k] = am.funct, 0
+            global_val[am.funct] = am.funct,
+            # global_val_addr[k] = am.funct, 0
         
         self.val.update(global_val)
         self.global_val_addr: Mapping[Id, tuple[Id, int]] = global_val_addr
@@ -859,9 +920,32 @@ class Select:
         finally:
             self.env = self.env.parents
             self.val = self.val.parents
+    
+    @overload
+    def find_val(self, x: Id, silent: Literal[False]=False, /) -> tuple[Id, ...] | tuple[()]: ...
+
+    @overload
+    def find_val(self, x: Id, silent: Literal[True], /) -> tuple[Id, ...] | tuple[()] | None: ...
+    
+    def find_val(self, x: Id, silent: bool = False, /) -> tuple[Id, ...] | tuple[()] | None:
+        match self.val.get(x):
+            case [y] as v:
+                if y == x:
+                    return v
+                self.val[x] = z = self.find_val(y)
+                return z
+            case tuple() as ys:
+                z = sum((self.find_val(y) for y in ys), ())
+                if z != ys:
+                    self.val[x] = z
+                return z
+            case None:
+                if silent:
+                    return None
+                raise KeyError(x)
 
     def lookup(self, x: Id, /):
-        return self.env[x], self.val[x]
+        return self.env[x], self.find_val(x)
 
 
     def select_array_make(self, name: Id, ty: Ty, /):
@@ -968,10 +1052,10 @@ class Select:
             #     added = Id(f'{src}.added')
             #     addi = MAddi(hi, 4 * idx, added)
             #     seq.append(addi)
-            #     hi = added
+            #     hi = added      
 
             # seq.append(MLoadLo(is_float, hi, start, dst))
-
+            # return seq
             return [MLoad(is_float, PhyReg.gp, self.static_val_gp_offset[src], dst)]
 
         def load_float(imm: float, dst: Id | PhyReg, /) -> list[I]:
@@ -998,17 +1082,17 @@ class Select:
                         self.gp_offset_top += 4
                     return [MLoadFloatImm(imm, dst)]
 
-        # def store_global(is_float: bool, src: Id | PhyReg, dst: Id, /):
-        #     start, idx = self.global_val_addr[dst]
-        #     hi_dst = Id(f'{src}.hi')
-        #     seq: list[I] = [MLuiHi(start, hi_dst)]
-        #     if idx:
-        #         addi = MAddi(src, 4 * idx)
-        #         seq.append(addi)
-        #         hi_dst = addi.dst
+        def store_global(is_float: bool, src: Id | PhyReg, dst: Id, /):
+            start, idx = self.global_val_addr[dst]
+            hi_dst = Id(f'{src}.hi')
+            seq: list[I] = [MLuiHi(start, hi_dst)]
+            if idx:
+                addi = MAddi(src, 4 * idx)
+                seq.append(addi)
+                hi_dst = addi.dst
 
-        #     seq.append(MStoreLo(is_float, src, hi_dst, start))
-        #     return seq
+            seq.append(MStoreLo(is_float, src, hi_dst, start))
+            return seq
         
         # def partition(xs: Iterable[Id], is_floats: Iterable[bool], /):
         #     ints: list[Id] = []
@@ -1037,10 +1121,13 @@ class Select:
                 self.val[target_id] = target_id,
                 return load_float(lit, target_id)
             case Var(), _:
-                _ty, vals = self.lookup(e.name)
+                ty, vals = self.lookup(e.name)
+                if isinstance(ty, TyFun):
+                    raise NotImplementedError(ty)
                 assert set(target_ids).isdisjoint(vals)
                 for src, dst in zip(vals, target_ids, strict=True):
-                    self.val[dst] = self.val[src]
+                    assert self.val[src] == (src,)
+                    self.val[dst] = src,
                 return []
             case Get(), _:
                 match self.lookup(e.array), self.lookup(e.index), target_ids:
@@ -1049,16 +1136,23 @@ class Select:
                         if array_v in MFunction.global_var_addr:
                             loaded = Id(f'{array_v}.loaded')
                             seq.extend(load_global(False, array_v, loaded))
-                            self.val[array_v] = loaded,
+                            # self.val[array_v] = loaded,
                         else:
-                            loaded = Id(f'{array_v}.copy')
-                            seq.append(MCopy(False, array_v, loaded))
+                            loaded = array_v
+                            # loaded = Id(f'{array_v}.copy')
+                            # seq.append(MCopy(False, array_v, loaded))
 
-                        index_v2 = Id(f'{index_v}.copy')
-                        seq.append(MCopy(False, index_v, index_v2))
-                        mul4 = MSlli(index_v2, 2)
-                        add = MAdd(loaded, mul4.dst)
-                        seq.append(mul4)
+                        del array_v
+
+                        # index_v2 = Id(f'{index_v}.copy')
+                        # seq.append(MCopy(False, index_v, index_v2))
+                        # mul4 = MSlli(index_v2, 2)
+                        # mul4 = MSlli(index_v, 2)
+                        load_sizeof = MLoadImm(abi_size(elem), Id(f'{elem}.sizeof'))
+                        mul = MMul(index_v, load_sizeof.dst, Id('index.mul.sizeof'))
+                        add = MAdd(loaded, mul.dst)
+                        seq.append(load_sizeof)
+                        seq.append(mul)
                         seq.append(add)
                         match abi_size(elem) // 4, target_ids, tuple(iter_is_float(elem)):
                             case 0, [], []:
@@ -1079,20 +1173,16 @@ class Select:
                 match y_v:
                     case [Id() as y]:
                         self.val[target_id] = target_id,
-                        y_ = Id(f'{y}.copy')
-                        target_id_ = Id(f'{target_id}.copy')
                         match e.op:
                             case UnaryOpKind.I_NEG:
-                                return [MCopy(False, y, y_), MNeg(y_, target_id_), MCopy(False, target_id_, target_id)]
+                                return [MNeg(y, target_id)]
                             case UnaryOpKind.F_NEG:
-                                return [MCopy(True, y, y_), MFNeg(y_, target_id_), MCopy(True, target_id_, target_id)]
+                                return [MFNeg(y, target_id)]
                     case _:
                         raise ValueError(y_v)
             case AppDir(), _:
-                match self.lookup(e.callee):
+                match self.env[e.callee], self.val[e.callee]:
                     case _, [callee_v] if callee_v.is_intrinsic():
-                        seq: list[I] = []
-
                         match sum((self.lookup(arg)[1] for arg in e.args), ()), target_ids:
                             case [arg1, arg2], [target_id] if callee_v.is_intrinsic('xor'):
                                 self.val[target_id] = target_id,
@@ -1101,10 +1191,13 @@ class Select:
                                 return [MCallIntrinsic('print_int', [arg], [False], tail, [], [])]
                             case [arg], [] if callee_v.is_intrinsic('print_char'):
                                 return [MOut(arg)]
+                            case [arg], [] if callee_v.is_intrinsic('assert_nvector'):
+                                tmp = Id('minus1')
+                                return [MLoadImm(-1, tmp), MCout(False, arg), MIf(MEq(tmp, arg), MSimuHalt(), Nop(), [], [])]
                             case [arg], [target_id]:
                                 self.val[target_id] = target_id,
                                 if callee_v.is_intrinsic('not'):
-                                    return [MNot(arg, target_id)]
+                                    return [MSeqz(arg, target_id)]
                                 elif callee_v.is_intrinsic('fsqr'):
                                     return [MFMul(arg, arg, target_id)]
                                 elif callee_v.is_intrinsic('fneg'):
@@ -1113,10 +1206,10 @@ class Select:
                                     return [MFSqrt(arg, target_id)]
                                 elif callee_v.is_intrinsic('fispos'):
                                     z = MLoadFZero()
-                                    return [z, MFLt(arg, z.dst, target_id)]
+                                    return [z, MFLt(z.dst, arg, target_id)]
                                 elif callee_v.is_intrinsic('fisneg'):
                                     z = MLoadFZero()
-                                    return [z, MFLt(z.dst, arg, target_id)]
+                                    return [z, MFLt(arg, z.dst, target_id)]
                                 elif callee_v.is_intrinsic('fiszero'):
                                     z = MLoadFZero()
                                     return [z, MFEq(arg, z.dst, target_id)]
@@ -1128,13 +1221,13 @@ class Select:
                                 elif callee_v.is_intrinsic('sin') or callee_v.is_intrinsic(
                                         'cos') or callee_v.is_intrinsic('floor') or callee_v.is_intrinsic('atan'):
                                     if callee_v.is_intrinsic('sin'):
-                                        intrinsic = 'caml_sin'
+                                        intrinsic = 'mincaml_sin'
                                     elif callee_v.is_intrinsic('cos'):
-                                        intrinsic = 'caml_cos'
+                                        intrinsic = 'mincaml_cos'
                                     elif callee_v.is_intrinsic('floor'):
-                                        intrinsic = 'caml_floor'
+                                        intrinsic = 'mincaml_floor'
                                     else:  # callee_v.is_intrinsic('atan')
-                                        intrinsic = 'caml_atan'
+                                        intrinsic = 'mincaml_atan'
                                     seq = [MCallIntrinsic(intrinsic,  [arg], [True], tail, [target_id], [True])]
                                     # if not tail:
                                     #     seq.append(MCopy(True, PhyReg('fa0'), target_id))
@@ -1152,14 +1245,16 @@ class Select:
                                 elif callee_v.is_intrinsic('read_float'):
                                     return [MCin(True, target_id)]
                                     # return [MCall(Label(callee_v), tail, [True], [target_id])]
+                            case [], []:
+                                if callee_v.is_intrinsic('print_newline'):
+                                    return [MOut(Id('newline'))]
+                                else:
+                                    raise ValueError(callee_v)
                             case _:
                                 ...
                         raise ValueError(str(callee_v), e.args, target_ids)
                     case TyFun(_, ret), [callee_v]:
                         seq: list[I] = []
-                        # is_floats = tuple(b for t in args for b in iter_is_float(t))
-                        # n_args_pass_by_stack = max(0, is_floats.count(True) - 8) + max(0, is_floats.count(False) - 8)
-                        # i, j, k = 0, 0, -4 * n_args_pass_by_stack
                         args: list[Id | PhyReg] = []
                         args_is_float: list[bool] = []
                         for arg in e.args:
@@ -1167,67 +1262,11 @@ class Select:
                             for is_float, src in zip(iter_is_float(arg_ty), arg_v, strict=True):
                                 args.append(src)
                                 args_is_float.append(is_float)
-                                # if is_float:
-                                    # dst = PhyReg(f'fa{j}')
-                                    # if src in MFunction.global_vars:
-                                    #     dst = Id(f'{src}.loaded')
-                                    #     seq.extend(load_global(True, src, dst))
-                                    #     float_args.append(dst)
-                                    # else:
-                                    # float_args.append(src)
-                                    # else:
-                                    #     seq.append(MCopy(is_float, src, dst=dst))
-                                # else:
-                                    # dst = PhyReg(f'a{i}')
-                                    # if src in MFunction.global_vars:
-                                    #     dst = Id(f'{src}.loaded')
-                                    #     seq.extend(load_global(False, src, dst))
-                                    #     int_args.append(dst)
-                                    # else:
-                                    # int_args.append(src)
-                                    # else:
-                                    #     seq.append(MCopy(is_float, src, dst=dst))
-                                # else:
-                                #     if src in MFunction.global_vars:
-                                #         tmp = PhyReg('ft11')
-                                #         seq.extend(load_global(True, src, tmp))
-                                #         seq.append(MStore(True, tmp, PhyReg.sp, k))
-                                #     else:
-                                #         seq.append(MStore(is_float, src, PhyReg.sp, k))
-                                #     k += 4
 
                         # TODO: tail call
                         seq.append(MCall(self.functions[callee_v], args, args_is_float, tail, list(target_ids), list(iter_is_float(ret))))
                         for target_id in target_ids:
                             self.val[target_id] = target_id,
-                        #     # n_return_values_pass_by_stack = max(0, is_floats.count(True) - 2) + max(0, is_floats.count(False) - 2)
-                        #     # i, j, k = 0, 0, -4 * n_return_values_pass_by_stack
-                        #     for is_float, target_id in zip(iter_is_float(ret), target_ids, strict=True):
-                        #         self.val[target_id] = target_id,
-                        #         if is_float and j < 2:
-                        #             if target_id in MFunction.global_vars:
-                        #                 x = Id(f'{callee_v}.ret.{i}')
-                        #                 seq.append(MCopy(True, PhyReg(f'fa{j}'), x))
-                        #                 seq.extend(store_global(True, x, target_id))
-                        #             else:
-                        #                 seq.append(MCopy(is_float, PhyReg(f'fa{j}'), dst=target_id))
-                        #             j += 1
-                        #         elif not is_float and i < 2:
-                        #             if target_id in MFunction.global_vars:
-                        #                 x = Id(f'{callee_v}.ret.{i}')
-                        #                 seq.append(MCopy(False, PhyReg(f'a{i}'), x))
-                        #                 seq.extend(store_global(False, x, target_id))
-                        #             else:
-                        #                 seq.append(MCopy(is_float, PhyReg(f'a{i}'), dst=target_id))
-                        #             i += 1
-                        #         else:
-                        #             if target_id in MFunction.global_vars:
-                        #                 tmp = PhyReg('ft11')
-                        #                 seq.append(MLoad(True, PhyReg.sp, k, dst=tmp))
-                        #                 seq.extend(store_global(True, tmp, target_id))
-                        #             else:
-                        #                 seq.append(MLoad(is_float, PhyReg.sp, k, dst=target_id))
-                        #             k += 4
 
                         return seq
                     case _, callee_v:
@@ -1242,13 +1281,15 @@ class Select:
 
                 match y1_v, y2_v, list(iter_is_float(ty)):
                     case [y1], [y2], [is_float]:
-                        y1_ = Id(f'{y1}.copy')
-                        y2_ = Id(f'{y2}.copy')
-                        target_id_ = Id(f'{target_id}.copy')
-                        y1_copy = MCopy(is_float, y1, y1_)
-                        y2_copy = MCopy(is_float, y2, y2_)
-                        target_copy = MCopy(is_float, target_id_, target_id)
-                        seq = [y1_copy, y2_copy, target_copy]
+                        # y1_ = Id(f'{y1}.copy')
+                        # y2_ = Id(f'{y2}.copy')
+                        # target_id_ = Id(f'{target_id}.copy')
+                        # y1_copy = MCopy(is_float, y1, y1_)
+                        # y2_copy = MCopy(is_float, y2, y2_)
+                        # target_copy = MCopy(is_float, target_id_, target_id)
+                        # seq = [y1_copy, y2_copy, target_copy]
+                        y1_, y2_, target_id_ = y1, y2, target_id
+                        seq: list[I] = []
                         match e.op:
                             case BinaryOpKind.I_ADD:
                                 seq.insert(-1, MAdd(y1_, y2_, target_id_))
@@ -1267,37 +1308,37 @@ class Select:
                             case BinaryOpKind.F_DIV:
                                 seq.insert(-1, MFDiv(y1_, y2_, target_id_))
                             case BinaryOpKind.I_EQ | BinaryOpKind.B_EQ:
-                                seq.insert(-1, MXor(y1_, y2_, target_id_))
-                            case BinaryOpKind.I_NEQ | BinaryOpKind.B_NEQ:
                                 xor = MXor(y1_, y2_)
-                                seq[-1:-1] = [xor, MNot(xor.dst, target_id_)]
+                                seq[-1:-1] = [xor, MSeqz(xor.dst, target_id_)]
+                            case BinaryOpKind.I_NEQ | BinaryOpKind.B_NEQ:
+                                seq.insert(-1, MXor(y1_, y2_, target_id_))
                             case BinaryOpKind.I_LT:
                                 seq.insert(-1, MLt(y1_, y2_, target_id_))
                             case BinaryOpKind.I_LE:  # y1 <= y2 <=> not (y2 < y1)
                                 lt = MLt(y2_, y1_)
-                                seq[-1:-1] = [lt, MNot(lt.dst, target_id_)]
+                                seq[-1:-1] = [lt, MSeqz(lt.dst, target_id_)]
                             case BinaryOpKind.I_GT:
                                 seq.insert(-1, MLt(y2_, y1_, target_id_))
                             case BinaryOpKind.I_GE:  # y1 >= y2 <=> not (y1 < y2)
                                 lt = MLt(y1_, y2_)
-                                seq[-1:-1] = [lt, MNot(lt.dst, target_id_)]
+                                seq[-1:-1] = [lt, MSeqz(lt.dst, target_id_)]
                             case BinaryOpKind.F_EQ:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFEq(y1_, y2_, target_id_))
                             case BinaryOpKind.F_NEQ:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFNeq(y1_, y2_, target_id_))
                             case BinaryOpKind.F_LT:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFLt(y1_, y2_, target_id_))
                             case BinaryOpKind.F_LE:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFLe(y1_, y2_, target_id_))
                             case BinaryOpKind.F_GT:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFLt(y2_, y1_, target_id_))
                             case BinaryOpKind.F_GE:
-                                target_copy.is_float = False
+                                # target_copy.is_float = False
                                 seq.insert(-1, MFLe(y2_, y1_, target_id_))
                     case _:
                         raise ValueError(y1_v, y2_v)
@@ -1312,7 +1353,7 @@ class Select:
                 tup = [self.lookup(x) for x in e.ys]
                 tup_v = sum([list(v) for _, v in tup], list[Id]())
                 for src, dst in zip(tup_v, target_ids, strict=True):
-                    self.val[dst] = self.val[src]
+                    self.val[dst] = src,
                 return []
             case Put(), _:
                 seq: list[I] = []
@@ -1321,16 +1362,21 @@ class Select:
                         if array_v in MFunction.global_var_addr:
                             loaded = Id(f'{array_v}.loaded')
                             seq.extend(load_global(False, array_v, loaded))
-                            self.val[array_v] = loaded, 
+                            # self.val[array_v] = loaded, 
                         else:
-                            loaded = Id(f'{array_v}.copy')
-                            seq.append(MCopy(False, array_v, loaded))
+                            # loaded = Id(f'{array_v}.copy')
+                            # seq.append(MCopy(False, array_v, loaded))
+                            loaded = array_v
 
-                        index_v2 = Id(f'{index_v}.copy')
-                        seq.append(MCopy(False, index_v, index_v2))
-                        mul4 = MSlli(index_v2, 2)
-                        where = MAdd(loaded, mul4.dst)
-                        seq.append(mul4)
+                        # index_v2 = Id(f'{index_v}.copy')
+                        # seq.append(MCopy(False, index_v, index_v2))
+                        # mul4 = MSlli(index_v2, 2)
+                        # mul4 = MSlli(index_v, 2)
+                        load_sizeof = MLoadImm(abi_size(elem), Id(f'{elem}.sizeof'))
+                        mul = MMul(index_v, load_sizeof.dst, Id('index.mul.sizeof'))
+                        where = MAdd(loaded, mul.dst)
+                        seq.append(load_sizeof)
+                        seq.append(mul)
                         seq.append(where)
                         for is_float, src, offset in zip(iter_is_float(elem), value_v, range(0, abi_size(elem), 4), strict=True):
                             seq.append(MStore(is_float, src, where.dst, offset))
@@ -1342,11 +1388,11 @@ class Select:
                     case [TyBool(), [cond_v]]:
                         self.val = self.val.new_child()
                         instrs_true = self.visit(e.br_true, target_ids, ra, tail)
-                        target_ids_trues = [self.val.get(v) for v in target_ids]
+                        target_ids_trues = tuple(self.find_val(x, True) for x in target_ids)
                         self.val = self.val.parents.new_child()
 
                         instrs_false = self.visit(e.br_false, target_ids, ra, tail)
-                        target_ids_falses = [self.val.get(v) for v in target_ids]
+                        target_ids_falses = tuple(self.find_val(x, True) for x in target_ids)
                         self.val = self.val.parents
 
                         for is_float, target_id, target_ids_true, target_ids_false in \
@@ -1379,19 +1425,7 @@ class Select:
                             case instrs:
                                 br_false = MSeq(instrs)
 
-                        # match self.cmp.get(cond_v):
-                        #     case MEq() as eq:
-                        #         return [MIf(eq, br_true, br_false, list(iter_is_float(e.typ)), list(target_ids))]
-                        #     case MNeq(_src1, _src2, target_id):
-                        #         return [MIf(MEq(_src1, _src2, target_id), br_false, br_true, list(iter_is_float(e.typ)), list(target_ids))]
-                        #     case MLt(_, _, target_id):
-                        #         return [MIf(cond_v, br_true, br_false, list(iter_is_float(e.typ)), list(target_ids))]
-                        #     case MLe(_, _, target_id) as le:
-                        #         return [MIf(le, br_true, br_false, list(iter_is_float(e.typ)), list(target_ids))]
-                        #     case None:
                         return [MIf(cond_v, br_true, br_false, list(iter_is_float(e.typ)), list(target_ids))]
-                        # case _:
-                        #     raise NotImplementedError(e)
                     case [_, cond_v]:
                         raise ValueError(cond_v)
             case Let(), _:
@@ -1399,7 +1433,7 @@ class Select:
                 seq = self.visit(e.binding.rhs, let_target_ids, ra)
                 assert e.binding.lhs not in self.env
                 self.env[e.binding.lhs] = e.binding.rhs.typ
-                self.val[e.binding.lhs] = sum([self.val[v] for v in let_target_ids], ())
+                self.val[e.binding.lhs] = sum(map(self.find_val, let_target_ids), ())
                 return seq + self.visit(e.expr, target_ids, ra, tail)
             case LetTuple(), _:
                 assert self.env.keys().isdisjoint(e.xs)
@@ -1418,8 +1452,35 @@ class Select:
                 raise NotImplementedError(e, target_ids)
 
     def visit_LetBinding(self, binding: LetBinding, ra: Id):
-        rhs_t = self.visit(binding.rhs, self.val[binding.lhs], ra)
-        return rhs_t
+        
+        with self.new_child_env({}):
+            seq = self.visit(binding.rhs, self.val[binding.lhs], ra, tail=False)
+
+            self.find_val(binding.lhs)
+            parents = self.val.parents
+            copyfrom: dict[Id, Id] = {}
+            for k, v in self.val.maps[0].items():
+                try:
+                    v0 = parents[k]
+                    assert len(v) == len(v0)
+                    for vv, vv0 in zip(v, v0):
+                        if vv != vv0:
+                            if vv0 not in copyfrom:
+                                copyfrom[vv0] = vv
+                            else:
+                                assert copyfrom[vv0] == vv
+                except KeyError:
+                    pass
+            for d, s in copyfrom.items():
+                seq.append(MCopy(next(iter(iter_is_float(self.env[d]))), s, d))
+        return seq
+        # target_ids = break_out(binding.rhs.typ, binding.lhs)
+        # seq = self.visit(binding.rhs, target_ids, ra)
+        # assert self.env[binding.lhs] == binding.rhs.typ
+        # for is_float, src, dst in zip(iter_is_float(binding.rhs.typ), sum([self.val[v] for v in target_ids], ()), self.val[binding.lhs], strict=True):
+        #     if src != dst:
+        #         seq.append(MCopy(is_float, src, dst))
+        # return seq
 
     def visit_Cls(self, cls: Cls):
         assert cls.entry.funct in self.env
@@ -1435,13 +1496,13 @@ class Select:
                               zip(f.formal_args, f.typ.args)}
             mf.formal_fv = {k: MArg(list(self.val[k]), list(iter_is_float(ty))) for k, ty in f.formal_fv}
 
-            s_saved = {i: Id(f's{i}.save') for i in range(12)}
+            # s_saved = {i: Id(f's{i}.save') for i in range(12)}
             mf.preparation.append(MCopy(False, PhyReg('ra'), mf.ra))
-            for i, s in s_saved.items():
-                mf.preparation.append(MCopy(False, PhyReg(f's{i}'), s))
-            fs_saved = {i: Id(f'fs{i}.save') for i in range(12)}
-            for i, fs in fs_saved.items():
-                mf.preparation.append(MCopy(True, PhyReg(f'fs{i}'), fs))
+            # for i, s in s_saved.items():
+            #     mf.preparation.append(MCopy(False, PhyReg(f's{i}'), s))
+            # fs_saved = {i: Id(f'fs{i}.save') for i in range(12)}
+            # for i, fs in fs_saved.items():
+            #     mf.preparation.append(MCopy(True, PhyReg(f'fs{i}'), fs))
 
             instrs: list[I] = []
             is_floats = tuple(b for t in f.typ.args for b in iter_is_float(t))
@@ -1456,12 +1517,12 @@ class Select:
                         instrs.append(MCopy(is_float, PhyReg(f'a{i}'), dst=src))
                         i += 1
                     else:
-                        tmp = PhyReg('ft11')
-                        instrs.append(MLoad(True, PhyReg('fp'), k, dst=tmp))
-                        if is_float:
-                            instrs.append(MCopy(is_float, tmp, src))
-                        else:
-                            instrs.append(MFMvXW(tmp, src))
+                        # tmp = PhyReg('ft11')
+                        instrs.append(MLoad(is_float, PhyReg('fp'), k, dst=src))
+                        # if is_float:
+                        #     instrs.append(MCopy(is_float, tmp, src))
+                        # else:
+                        #     instrs.append(MFMvXW(tmp, src))
                         k += 4
 
             ret = break_out(f.typ.ret, descr='ret')
@@ -1487,10 +1548,10 @@ class Select:
                         case _:
                             raise ValueError(src)
 
-                for i, s in reversed(s_saved.items()):
-                    seq.append(MCopy(False, s, PhyReg(f's{i}')))
-                for i, s in reversed(fs_saved.items()):
-                    seq.append(MCopy(True, s, PhyReg(f'fs{i}')))
+                # for i, s in reversed(s_saved.items()):
+                #     seq.append(MCopy(False, s, PhyReg(f's{i}')))
+                # for i, s in reversed(fs_saved.items()):
+                #     seq.append(MCopy(True, s, PhyReg(f'fs{i}')))
                 seq.append(MCopy(False, mf.ra, PhyReg('ra')))
                 seq.append(MRet())
                 return seq
@@ -1504,7 +1565,7 @@ class Select:
 class LinearScan:
     As: Final = 8
     Ss: Final = 12
-    Ts: Final = 7
+    Ts: Final = 6
     Fas: Final = 8
     Fss: Final = 12
     Fts: Final = 11
@@ -1577,7 +1638,7 @@ class LinearScan:
         res = self.live_interval.maps[0]
         return res, self.favor, self.live_across_call
 
-    def visit(self, instr: I, is_float: dict[Id, bool]):
+    def visit(self, instr: I, is_float: dict[Id, bool], /): #, reads: dict[Id, int], writes: dict[Id, int],
         match instr:
             case MCopy(_is_float, src, dst):
                 if isinstance(src, Id):
@@ -1630,7 +1691,7 @@ class LinearScan:
                     elif not _is_float:
                         self.add_favor(addr, val)
 
-            case MOut(Id() as src):
+            case MOut(Id() as src) | MCout(False, Id() as src):
                 self.lookup(src)
                 is_float[src] = False
             case MFCvtWS(Id() as s, Id() as w) | MFCvtSW(Id() as w, Id() as s) | MFMvWX(Id() as w, Id() as s) | MFMvXW(Id() as s, Id() as w):
@@ -1656,9 +1717,12 @@ class LinearScan:
                 self.lookup(src2)
                 self.lookup(dst)
                 is_float[dst] = is_float[src1] = is_float[src2] = isinstance(instr, (MFAdd, MFSub, MFMul, MFDiv))
-            case MIf(Id() as cond, br_true, br_false, _is_float, dst):
-                self.lookup(cond)
-                is_float[cond] = False
+            case MIf(Id() | MEq() as cond, br_true, br_false, _is_float, dst):
+                if isinstance(cond, Id):
+                    self.lookup(cond)
+                    is_float[cond] = False
+                else:
+                    self.visit(cond, is_float)
                 match br_true:
                     case list():
                         for i, b in enumerate(br_true):
@@ -1710,14 +1774,12 @@ class LinearScan:
                         elif not i and x < 2:
                             self.add_favor(d, PhyReg(f'a{x}'))
                             x += 1
-            case MRet() | Nop():
+            case MRet() | Nop() | MSimuHalt():
                 ...
             case MBinaryImm(Id() as src, _imm, Id() as dst):
                 self.lookup(src)
                 self.lookup(dst)
                 is_float[dst] = is_float[src] = False
-            # case MAddi(PhyReg() as src, _imm, PhyReg() as dst):
-            #     ...
             case instr:
                 raise NotImplementedError(instr)
 
@@ -1758,7 +1820,7 @@ class LinearScan:
                     assert not is_float[ptr]
                 else:
                     assert not ptr.is_float()
-            case MOut(Id() as src):
+            case MOut(Id() as src) | MCout(False, Id() as src):
                 assert not is_float[src]
             case MFCvtWS(Id() as s, Id() as w) | MFCvtSW(Id() as w, Id() as s) | MFMvWX(Id() as w, Id() as s) | MFMvXW(Id() as s, Id() as w):
                 assert not is_float[w] and is_float[s]
@@ -1770,8 +1832,11 @@ class LinearScan:
                 assert is_float[src1] and is_float[src2] and not is_float[dst]
             case MBinary(Id() as src1, Id() as src2, Id() as dst):
                 assert is_float[dst] == is_float[src1] == is_float[src2] == isinstance(instr, (MFAdd, MFSub, MFMul, MFDiv))
-            case MIf(Id() as cond, br_true, br_false, _is_float, dst):
-                assert not is_float[cond]
+            case MIf(Id() | MEq() as cond, br_true, br_false, _is_float, dst):
+                if isinstance(cond, Id):
+                    assert not is_float[cond]
+                else:
+                    self.visit_check(cond, is_float)
                 match br_true:
                     case list():
                         for i, b in enumerate(br_true):
@@ -1799,7 +1864,7 @@ class LinearScan:
                 assert all(is_float[a] == i for a, i in zip(args, args_is_float, strict=True))
                 if not tail:
                     assert all(is_float[d] == i for d, i in zip(dsts, dsts_is_float, strict=True))
-            case MRet() | Nop():
+            case MRet() | Nop() | MSimuHalt():
                 ...
             case MBinaryImm(Id() as src, _imm, Id() as dst):
                 assert not is_float[dst] and not is_float[src]
@@ -1867,7 +1932,7 @@ class LinearScan:
                 if isinstance(ptr, Id):
                     live_in.add(ptr)
 
-            case MOut(Id()):
+            case MOut(Id()) | MCout(_, Id()):
                 ...
             case MUnary(src, dst):
                 if isinstance(dst, Id):
@@ -1878,7 +1943,7 @@ class LinearScan:
                 live_in.discard(dst)
                 live_in.add(src1)
                 live_in.add(src2)
-            case MIf(Id() as cond, br_true, br_false, _is_float, _dst):
+            case MIf(Id() | MEq() as cond, br_true, br_false, _is_float, _dst):
 
                 live_in1, live_in2 = set(live_in), set(live_in)
                 match br_true:
@@ -1900,7 +1965,10 @@ class LinearScan:
                 live_in.clear()
                 live_in.update(live_in1)
                 live_in.update(live_in2)
-                live_in.add(cond)
+                if isinstance(cond, Id):
+                    live_in.add(cond)
+                else:
+                    self.live(cond, live_in)
             case MSeq(instrs):
                 for instr in reversed(instrs):
                     self.live(instr, live_in)
@@ -1910,7 +1978,7 @@ class LinearScan:
                 for x in live_in:
                     self.live_across_call[x] = True
                 live_in.update(args)
-            case MRet() | Nop():
+            case MRet() | Nop() | MSimuHalt():
                 ...
             case MBinaryImm(Id() as src, _imm, Id() as dst):
                 live_in.discard(dst)
@@ -1928,7 +1996,8 @@ class LinearScan:
                     if y in register and x != y and register[x] == register[y]:
                         assert i.disjoint(j)
 
-    def linear_scan(self, mf: MFunction):  # , args: list[Id], formal_fvs: list[Id], rets: list[Id], instrs: list[I]
+    def linear_scan(self, mf: MFunction) -> tuple[dict[Id, PhyReg], dict[Id, StackSlot]]:  # , args: list[Id], formal_fvs: list[Id], rets: list[Id], instrs: list[I]
+        return {}, {v: StackSlot(i) for i, v in enumerate(self.live_interval.maps[0])}
         active_int: list[tuple[Id, Interval]] = []
         active_float: list[tuple[Id, Interval]] = []
         free_int = \
@@ -2014,14 +2083,17 @@ class AsmEmmiter:
         ...
 
     def visit_subst(self, instrs: Iterable[I], register: Mapping[Id, PhyReg], location: Mapping[Id, StackSlot], gp_offset: Mapping[Id, int], local_start: int, framesize: int) -> Iterable[I]:
-        def get_reg(x: Id | PhyReg):
+        # def get_reg(x: Id | PhyReg):
+        #     if isinstance(x, Id):
+        #         return register[x]
+        #     return x
+        
+        def get_reg_or_stackslot_or_global(x: Id | PhyReg):
             if isinstance(x, Id):
-                return register[x]
-            return x
-
-        def get_reg_or_stackslot(x: Id | PhyReg):
-            if isinstance(x, Id):
-                return register.get(x) or (local_start - 4 * location[x] - 4)
+                try:
+                    return register.get(x) or (PhyReg.sp, local_start - 4 * location[x] - 4)
+                except KeyError:
+                    return (PhyReg.gp, gp_offset[x])
             return x
         
         def copy(s: PhyReg | tuple[PhyReg, int], d: PhyReg | tuple[PhyReg, int], /):
@@ -2036,29 +2108,35 @@ class AsmEmmiter:
                             case _, _:
                                 yield MFMvWX(s, d)
                 case [base, offset], PhyReg():
-                    yield MLoad(d.is_float(), base, offset, d)
+                    match base:
+                        case PhyReg():
+                            yield MLoad(d.is_float(), base, offset, d)
+                        case Id():
+                            assert d.name != 't6'
+                            yield MLuiHi(base, PhyReg('t6'))
+                            if offset:
+                                yield MAddi(PhyReg('t6'), offset, PhyReg('t6'))
+                            yield MLoadLo(d.is_float(), PhyReg('t6'), base, d)
                 case PhyReg(), [base, offset]:
-                    yield MStore(s.is_float(), s, base, offset)
-                case [base1, offset1], [base2, offset2]:
+                    match base:
+                        case PhyReg():
+                            yield MStore(s.is_float(), s, base, offset)
+                        case Id():
+                            assert s.name != 't6'
+                            yield MLuiHi(base, PhyReg('t6'))
+                            yield MStoreLo(s.is_float(), s, PhyReg('t6'), base)
+                case [PhyReg() as base1, offset1], [PhyReg() as base2, offset2]:
                     if base1 != base2 or offset1 != offset2:
                         yield MLoad(True, base1, offset1, PhyReg('ft11'))
                         yield MStore(True, PhyReg('ft11'), base2, offset2)
                 case _:
                     raise ValueError(s, d)
                 
-        def rearrange(xs: list[Id | PhyReg], xs_is_float: list[bool], maximum: int = 8, pass_argument: bool = True, /):
+        def rearrange(xs: list[Id | PhyReg], xs_is_float: list[bool], maximum: int = 8, pass_argument: bool = True, /) -> Iterable[I]:
             pairs: list[tuple[PhyReg | tuple[PhyReg, int], PhyReg | tuple[PhyReg, int]]] = []
             i, j, k = 0, 0, -4 * (len(xs) - min(maximum, xs_is_float.count(False)) - min(maximum, xs_is_float.count(True)))
             for x, is_float in zip(xs, xs_is_float):
-                try:
-                    match get_reg_or_stackslot(x):
-                        case PhyReg() as r:
-                            rs = r
-                        case int() as stackslot:
-                            rs = (PhyReg.sp, stackslot)
-                except KeyError:
-                    assert isinstance(x, Id)
-                    rs = (PhyReg.gp, gp_offset[x])
+                rs = get_reg_or_stackslot_or_global(x)
                 if not is_float and i < maximum:
                     rd = PhyReg(f'a{i}')
                     i += 1
@@ -2107,131 +2185,133 @@ class AsmEmmiter:
                             raise NotImplementedError()
                 for s, d in reversed(stack):
                     yield from copy(s, d)
+        scratch = (PhyReg('t0'), PhyReg('t1'), PhyReg('t2')), (PhyReg('ft0'), PhyReg('ft1'), PhyReg('ft2'))
+
         for instr in instrs:
             match instr:
                 case MLoadImm(imm, dst):
-                    yield MLoadImm(imm, get_reg(dst))
-                case MLui(imm, dst):
-                    yield MLui(imm, get_reg(dst))
-                case MLuiHi(label, dst):
-                    yield MLuiHi(label, get_reg(dst))
-                case MLoadFZero(dst):
-                    yield MFMvWX(PhyReg.zero, get_reg(dst))
-                case MLoadFloatImm(imm, dst):
-                    d = get_reg(dst)
-                    l = MLoadFloatImm.float_table[imm]
-                    yield MLoad(True, PhyReg.gp, gp_offset[l], d)
-
-                case MCopy(is_float, src, dst):
-                    s = get_reg_or_stackslot(src)
-                    d = get_reg_or_stackslot(dst)
-                    if s == d:
-                        continue
-                    match s, d:
-                        case PhyReg(), PhyReg():
-                            yield MCopy(is_float, s, d)
-                        case PhyReg(), int():
-                            yield MStore(is_float, s, PhyReg.sp, d)
-                        case int(), PhyReg():
-                            yield MLoad(is_float, PhyReg.sp, s, d)
-                        case int(), int():
-                            tmp = PhyReg('ft11')
-                            yield MLoad(True, PhyReg.sp, s, tmp)
-                            yield MStore(True, tmp, PhyReg.sp, d)
-                        case _:
-                            raise ValueError(s, d)
-                case MOut(src):
-                    yield MOut(get_reg(src))
-                case MCin(is_float, dst):
-                    yield MCin(is_float, get_reg(dst))
-                case MFMvXW(src, dst):
-                    s = get_reg_or_stackslot(src)
-                    d = get_reg_or_stackslot(dst)
-                    match s, d:
-                        case PhyReg(), PhyReg():
-                            yield MFMvXW(s, d)
-                        case PhyReg(), int():
-                            yield MStore(True, s, PhyReg.sp, d)
-                        case int(), PhyReg():
-                            yield MLoad(False, PhyReg.sp, s, d)
-                        case int(), int():
-                            if s == d: continue
-                            tmp = PhyReg('ft11')
-                            yield MLoad(True, PhyReg.sp, s, tmp)
-                            yield MStore(False, tmp, PhyReg.sp, d)
-                        case _:
-                            raise ValueError(s, d)
-                case MFMvWX(src, dst):
-                    s = get_reg_or_stackslot(src)
-                    d = get_reg_or_stackslot(dst)
-                    match s, d:
-                        case PhyReg(), PhyReg():
-                            yield MFMvWX(s, d)
-                        case PhyReg(), int():
-                            yield MStore(False, s, PhyReg.sp, d)
-                        case int(), PhyReg():
-                            yield MLoad(True, PhyReg.sp, s, d)
-                        case int(), int():
-                            if s == d: continue
-                            tmp = PhyReg('ft11')
-                            yield MLoad(False, PhyReg.sp, s, tmp)
-                            yield MStore(True, tmp, PhyReg.sp, d)
-                        case _:
-                            raise ValueError(s, d)
-                case MUnary(src, dst):
-                    s, d = get_reg(src), get_reg(dst)
-                    yield replace(instr, src=s, dst=d)
-                case MBinaryImm(src, imm, dst):
-                    s, d = get_reg(src), get_reg(dst)
-                    yield replace(instr, src=s, imm=imm, dst=d)
-                case MBinary(src1, src2, dst):
-                    s1, s2, d = get_reg(src1), get_reg(src2), get_reg(dst)
-                    yield replace(instr, src1=s1, src2=s2, dst=d)
-                case MLoad(is_float, src, offset, dst):
-                    s, d = get_reg(src), get_reg_or_stackslot(dst)
-                    if s.name == 'fp':
-                        s = PhyReg.sp
-                        offset += framesize
+                    d = get_reg_or_stackslot_or_global(dst)
                     match d:
                         case PhyReg():
-                            yield MLoad(is_float, s, offset, d)
-                        case int():
-                            tmp = PhyReg('ft11')
-                            yield MLoad(True, s, offset, tmp)
-                            yield MStore(True, tmp, PhyReg.sp, d)
+                            yield MLoadImm(imm, d)
+                        case _:
+                            yield MLoadImm(imm, scratch[False][0])
+                            yield from copy(scratch[False][0], d)
+                case MLui(imm, dst):
+                    d = get_reg_or_stackslot_or_global(dst)
+                    match d:
+                        case PhyReg():
+                            yield MLui(imm, d)
+                        case _:
+                            yield MLui(imm, PhyReg('t6'))
+                            yield from copy(PhyReg('t6'), d)
+
+                case MLuiHi(label, dst):
+                    raise NotImplementedError()
+                    # d = get_reg_or_stackslot(dst)
+                    # match d:
+                    #     case PhyReg():
+                    #         yield MLuiHi(label, d)
+                    #     case _:
+                    #         yield MLuiHi(label, PhyReg('t6'))
+                    #         yield from copy(PhyReg('t6'), d)
+                case MLoadFZero(dst):
+                    yield from copy(PhyReg.zero, get_reg_or_stackslot_or_global(dst))
+                case MLoadFloatImm(imm, dst):
+                    l = MLoadFloatImm.float_table[imm]
+                    yield from copy((PhyReg.gp, gp_offset[l]), get_reg_or_stackslot_or_global(dst))
+                case MCopy(is_float, src, dst):
+                    s = get_reg_or_stackslot_or_global(src)
+                    d = get_reg_or_stackslot_or_global(dst)
+                    yield from copy(s, d)
+                case MOut(src):
+                    match get_reg_or_stackslot_or_global(src):
+                        case PhyReg() as s:
+                            yield MOut(s)
+                        case stackslot:
+                            yield from copy(stackslot, scratch[False][0])
+                            yield MOut(scratch[False][0])
+                case MCout(is_float, src):
+                    match get_reg_or_stackslot_or_global(src):
+                        case PhyReg() as s:
+                            yield MCout(is_float, s)
+                        case stackslot:
+                            yield from copy(stackslot, scratch[is_float][0])
+                            yield MCout(is_float, scratch[is_float][0])
+                case MCin(is_float, dst):
+                    match get_reg_or_stackslot_or_global(dst):
+                        case PhyReg() as d:
+                            yield MCin(is_float, d)
+                        case stackslot:
+                            yield MCin(is_float, scratch[is_float][0])
+                            yield from copy(scratch[is_float][0], stackslot)
+                case MFMvXW(src, dst) | MFMvWX(src, dst):
+                    s = get_reg_or_stackslot_or_global(src)
+                    d = get_reg_or_stackslot_or_global(dst)
+                    yield from copy(s, d)
+                case MUnary(src, dst):
+                    bs, bd = instr.is_float
+                    yield from copy(get_reg_or_stackslot_or_global(src), scratch[bs][0])
+                    yield replace(instr, src=scratch[bs][0], dst=scratch[bd][0])
+                    yield from copy(scratch[bd][0], get_reg_or_stackslot_or_global(dst))
+                case MBinaryImm(PhyReg(), _, PhyReg()):
+                    yield instr
+                case MBinaryImm(src, imm, dst):
+                    yield from copy(get_reg_or_stackslot_or_global(src), scratch[False][0])
+                    yield replace(instr, src=scratch[False][0], imm=imm, dst=scratch[False][0])
+                    yield from copy(scratch[False][0], get_reg_or_stackslot_or_global(dst))
+                case MBinary(src1, src2, dst):
+                    yield from copy(get_reg_or_stackslot_or_global(src1), scratch[instr.is_float[0]][0])
+                    yield from copy(get_reg_or_stackslot_or_global(src2), scratch[instr.is_float[1]][1])
+                    yield replace(instr, src1=scratch[instr.is_float[0]][0], src2=scratch[instr.is_float[1]][1], dst=scratch[instr.is_float[2]][2])
+                    yield from copy(scratch[instr.is_float[2]][2], get_reg_or_stackslot_or_global(dst))
+                case MLoad(is_float, src, offset, dst):
+                    s, d = get_reg_or_stackslot_or_global(src), get_reg_or_stackslot_or_global(dst)
+                    match s:
+                        case PhyReg('fp'):
+                            offset += framesize
+                            yield from copy((PhyReg.sp, offset), d)
+                        case PhyReg():
+                            yield from copy((s, offset), d)
+                        case _:
+                            assert not isinstance(d, PhyReg) or d.name != 't6'
+                            yield from copy(s, PhyReg('t6'))
+                            yield from copy((PhyReg('t6'), offset), d)
 
                 case MLoadLo(is_float, src, lo, dst):
-                    s, d = get_reg(src), get_reg_or_stackslot(dst)
-                    match d:
-                        case PhyReg():
-                            yield MLoadLo(is_float, s, lo, d)
-                        case int():
-                            tmp = PhyReg('ft11')
-                            yield MLoadLo(True, s, lo, tmp)
-                            yield MStore(True, tmp, PhyReg.sp, d)
+                    raise NotImplementedError()
+                    # s, d = get_reg_or_stackslot(src), get_reg_or_stackslot(dst)
+                    # match d:
+                    #     case PhyReg():
+                    #         yield MLoadLo(is_float, s, lo, d)
+                    #     case int():
+                    #         tmp = PhyReg('ft11')
+                    #         yield MLoadLo(True, s, lo, tmp)
+                    #         yield MStore(True, tmp, PhyReg.sp, d)
 
                 case MStore(is_float, src, ptr, offset):
-                    s, p = get_reg_or_stackslot(src), get_reg(ptr)
-                    if p.name == 'fp':
-                        p = PhyReg.sp
-                        offset += framesize
-                    match s:
+                    s, p = get_reg_or_stackslot_or_global(src), get_reg_or_stackslot_or_global(ptr)
+                    match p:
+                        case PhyReg('fp'):
+                            offset += framesize
+                            yield from copy(s, (PhyReg.sp, offset))
                         case PhyReg():
-                            yield MStore(is_float, s, p, offset)
-                        case int():
-                            tmp = PhyReg('ft11')
-                            yield MLoad(True, p, offset, tmp)
-                            yield MStore(True, tmp, p, s)
+                            yield from copy(s, (p, offset))
+                        case _:
+                            assert not isinstance(p, PhyReg) or p.name != 't6'
+                            yield from copy(p, PhyReg('t6'))
+                            yield from copy(s, (PhyReg('t6'), offset))
 
                 case MStoreLo(is_float, src, ptr, lo):
-                    s, p = get_reg_or_stackslot(src), get_reg(ptr)
-                    match s:
-                        case PhyReg():
-                            yield MStoreLo(is_float, s, p, lo)
-                        case int():
-                            tmp = PhyReg('ft11')
-                            yield MLoadLo(True, p, lo, tmp)
-                            yield MStore(True, tmp, p, s)
+                    raise NotImplementedError()
+                    # s, p = get_reg_or_stackslot(src), get_reg(ptr)
+                    # match s:
+                    #     case PhyReg():
+                    #         yield MStoreLo(is_float, s, p, lo)
+                    #     case int():
+                    #         tmp = PhyReg('ft11')
+                    #         yield MLoadLo(True, p, lo, tmp)
+                    #         yield MStore(True, tmp, p, s)
 
                 case MIf(cond, I() as br_true, I() as br_false, _is_float, _dst):
 
@@ -2252,8 +2332,9 @@ class AsmEmmiter:
 
                     match cond:
                         case Id():
-                            c = register[cond]
-                            yield MIf(c, br_true_, br_false_, _is_float, _dst)
+                            # c = register[cond]
+                            yield from copy(get_reg_or_stackslot_or_global(cond), scratch[False][0])
+                            yield MIf(scratch[False][0], br_true_, br_false_, _is_float, _dst)
                         case PhyReg():
                             yield MIf(cond, br_true_, br_false_, _is_float, _dst)
                         case MEq(src1, src2, dst):
@@ -2273,12 +2354,13 @@ class AsmEmmiter:
                             yield i
                         case _:
                             yield MSeq(seq_)
-                case MCall(MFunction(funct=funct), args, args_is_float, tail, dsts, dsts_is_float) | MCallIntrinsic(funct, args, args_is_float, tail, dsts, dsts_is_float):
-                    yield MLabel(Id(f'prepare_to_call_{funct}'))
+                case MCall(MFunction(), args, args_is_float, tail, dsts, dsts_is_float) | MCallIntrinsic(_, args, args_is_float, tail, dsts, dsts_is_float):
                     yield from rearrange(args, args_is_float)
                     yield instr
                     yield from rearrange(dsts, dsts_is_float, 2, False)
-                    yield MLabel(Id(f'end_of_call_{funct}'))
+                case MSimuHalt():
+                    yield MLoadImm(-1, PhyReg('ra'))
+                    yield MRet()
                 case MRet() | MLabel() | MJump():
                     yield instr
                 case Nop():
@@ -2355,6 +2437,17 @@ class AsmEmmiter:
                         case _:
                             ...
                     res.append(mif)
+                # case MStore(_, PhyReg() as s, PhyReg() as p, offset):
+                #     if len(q) > 1:
+                #         match q[1]:
+                #             case MStore(_, PhyReg() as s1, PhyReg() as p1, offset1) if p == p1 and offset == offset1:
+                #                 if s != s1:
+                #                     q[1] = MSeq([q[1], MCopy(False, s, s1)])
+                #                 else:
+                #                     q.popleft()
+                #             case _:
+                #                 res.append(q.popleft())
+
                 case Nop() | MSeq([]):
                     q.popleft()
                 case MSeq([i]):
@@ -2369,57 +2462,60 @@ class AsmEmmiter:
         instrs.extend(res)
         instrs.extend(q)
 
-    def emit_asm(self, register: dict[Id, PhyReg], location: dict[Id, StackSlot], mf: MFunction, peephole: bool = True):
+    def emit_asm(self, register: dict[Id, PhyReg], location: dict[Id, StackSlot], mf: MFunction, peephole: bool = False):
         framesize = 4 * len(location) + 4 * max(mf.n_words_pass_by_stack, mf.n_words_return_by_stack)
         local_start = 4 * len(location)
-        # callee_saved = {PhyReg(f's{i}') for i in range(12)} | {PhyReg(f'fs{i}') for i in range(12)}
-        # need_to_save = [v for v in register.values() if v in callee_saved]
-        # framesize += 4 * len(need_to_save)
         while framesize & 15 != 0:
             framesize += 4
             local_start += 4
         instrs: list[str] = []
+        instrs.append(f'.section .text')
+        instrs.append(f'.type {mf.funct.dump_as_label()}, @function')
         instrs.append(f'.globl {mf.funct.dump_as_label()}')
         instrs.append(f'{mf.funct.dump_as_label()}:')
-        if isinstance(mf, MFunctionMain):
-            instrs.append(f'    li gp, 0x10000')
+        # if isinstance(mf, MFunctionMain):
+        #     instrs.append(f'    li gp, 0x10000')
         if framesize:
             instrs.append(f'    addi sp, sp, {-framesize}')
 
-        # instrs.append(f'    sw fp, {framesize - 8}(sp)')
-        # for i, reg in enumerate(need_to_save):
-        # instrs.append(f'    sw {reg}, {framesize - 12 - 4 * i}(sp)')
-        # instrs.append(f'    addi fp, sp, {framesize - 12 - 4 * len(need_to_save)}')
-        # instrs.append(f'    addi fp, sp, {framesize - 8}')
         def epilogue() -> Iterable[str]:
-            # for i, reg in enumerate(need_to_save):
-            #     yield f'    lw {reg}, {framesize - 12 - 4 * i}(sp)'
-            #     yield f'    lw fp, {framesize - 8}(sp)'
             if framesize:
                 yield f'    addi sp, sp, {framesize}'
             yield f'    ret'
 
         preparation = list(self.visit_subst(mf.preparation, register, location, mf.global_var_gp_offset, local_start, framesize))
+        gp_offset_int: dict[int, set[Id]] = {offset: set() for offset in mf.global_var_gp_offset.values()}
+        gp_offset_int2: dict[int, tuple[Id, int]] = {offset: mf.global_var_addr.get(x, (x, 0)) for x, offset in mf.global_var_gp_offset.items()}
+
+        for x, offset in mf.global_var_gp_offset.items():
+            gp_offset_int[offset].add(x)
+
         if peephole:
             self.peephole(preparation)
         for instr in preparation:
-            for res in self.emit_asm_instr(instr, epilogue):
-                instrs.append(res)
+            for res in self.emit_asm_instr(instr, epilogue, gp_offset_int, gp_offset_int2):
+                instrs.append(f'{res} \t# {mf.funct}')
 
-        instrs.append(f'"{mf.funct}.func_begin":')
-        body = list(self.visit_subst(mf.body, register, location, mf.global_var_gp_offset, local_start, framesize))
+        # instrs.append(f'"{mf.funct}.func_begin":')
+        body: list[I] = []
+        for _i, b in enumerate(mf.body):
+            for instr in self.visit_subst((b,), register, location, mf.global_var_gp_offset, local_start, framesize):
+                body.append(instr)
+
+
         if peephole:
             self.peephole(body)
         for _i, instr in enumerate(body):
-            for res in self.emit_asm_instr(instr, epilogue):
-                instrs.append(res)
+            for res in self.emit_asm_instr(instr, epilogue, gp_offset_int, gp_offset_int2):
+                instrs.append(f'{res}')
         # instrs.append(f'{mf.funct}.func_end:')
 
         instrs.append('')
         return instrs
 
-    def emit_asm_instr(self, instr: I, epilogue: Callable[[], Iterable[str]]) -> Iterable[str]:
-
+    def emit_asm_instr(self, instr: I, epilogue: Callable[[], Iterable[str]], gp_offset_int: Mapping[int, set[Id]], gp_offset_int2: Mapping[int, tuple[Id, int]]) -> Iterable[str]:
+        tsuka = False
+        allow_longjmp = True
         match instr:
             case MLoadImm(imm, PhyReg() as d):
                 yield f'    li {d}, {int(imm)}'
@@ -2428,64 +2524,152 @@ class AsmEmmiter:
             case MLui(imm, PhyReg() as d):
                 yield f'    lui {d}, {imm} # {hex(imm)}'
             case MLuiHi(label, PhyReg() as d):
+                assert 0
                 yield f'    lui {d}, %hi({label.dump_as_label()})'
             case MCopy(False, PhyReg() as s, PhyReg() as d):
                 yield f'    mv {d}, {s}'
             case MCopy(True, PhyReg() as s, PhyReg() as d):
                 yield f'    fmv.s {d}, {s}'
             case MOut(PhyReg() as s):
-                yield f'    out {s}'
+                if tsuka:
+                    yield f'    out {s}'
+                else:
+                    assert s.name != 'a0'
+                    yield f'    mv a0, {s}'
+                    yield f'    call putchar'
             case MCin(False, PhyReg() as d):
-                yield f'    cin.int {d}'
+                if tsuka:
+                    yield f'    cin.int {d}'
+                else:
+                    yield f'    call read_int'
+                    yield f'    mv {d}, a0'
             case MCin(True, PhyReg() as d):
-                yield f'    cin.float {d}'
+                if tsuka:
+                    yield f'    cin.float {d}'
+                else:
+                    yield f'    call read_float'
+                    yield f'    fmv.s {d}, fa0'
+            case MCout(False, PhyReg() as s):
+                assert 0
+                yield f'    cout.int {s}'
+            case MCout(True, PhyReg() as s):
+                assert 0
+                yield f'    cout.float {s}'
             case MUnary(PhyReg() as s, PhyReg() as d):
                 yield f'    {instr.opcode} {d}, {s}'
             case MBinaryImm(PhyReg() as s, imm, PhyReg() as d):
                 yield f'    {instr.opcode} {d}, {s}, {imm}'
             case MBinary(PhyReg() as s1, PhyReg() as s2, PhyReg() as d):
                 yield f'    {instr.opcode} {d}, {s1}, {s2}'
+            case MTernary(PhyReg() as s1, PhyReg() as s2, PhyReg() as s3, PhyReg() as d):
+                yield f'    {instr.opcode} {d}, {s1}, {s2}, {s3}'
             case MLoad(False, PhyReg() as s, offset, PhyReg() as d):
-                yield f'    lw {d}, {offset}({s})'
+                if s.name == 'gp':
+                    yield f"    lui {d}, %hi({gp_offset_int2[offset][0].dump_as_label()})"
+                    if gp_offset_int2[offset][1]: yield f"    addi {d}, {d}, {4 * gp_offset_int2[offset][1]}"
+                    yield f"    lw {d}, %lo({gp_offset_int2[offset][0]})({d})"
+                    # yield f"    lw {d}, {offset}({s}) # {', '.join(map(str, gp_offset_int[offset]))}"
+                elif offset > 2047 or offset < -2048:
+                    yield f"    li t6, {offset}"
+                    yield f"    add t6, {s}, t6"
+                    yield f"    lw {d}, 0(t6)"
+                else: 
+                    yield f'    lw {d}, {offset}({s})'
             case MLoad(True, PhyReg() as s, offset, PhyReg() as d):
-                yield f'    flw {d}, {offset}({s})'
+                if s.name == 'gp':
+                    yield f"    lui t6, %hi({gp_offset_int2[offset][0].dump_as_label()})"
+                    if gp_offset_int2[offset][1]: yield f"    addi t6, t6, {4 * gp_offset_int2[offset][1]}"
+                    yield f"    flw {d}, %lo({gp_offset_int2[offset][0]})(t6)"
+                    # yield f"    flw {d}, {offset}({s}) \t# {', '.join(map(str, gp_offset_int[offset]))}"
+                elif offset > 2047 or offset < -2048:
+                    yield f"    li t6, {offset}"
+                    yield f"    add t6, {s}, t6"
+                    yield f"    flw {d}, 0(t6)"
+                else:
+                    yield f'    flw {d}, {offset}({s})'
             case MLoadLo(False, PhyReg() as s, lo, PhyReg() as d):
                 yield f'    lw {d}, %lo({lo.dump_as_label()})({s})'
             case MLoadLo(True, PhyReg() as s, lo, PhyReg() as d):
                 yield f'    flw {d}, %lo({lo.dump_as_label()})({s})'
             case MStore(False, PhyReg() as src, PhyReg() as ptr, offset):
-                yield f'    sw {src}, {offset}({ptr})'
+                if ptr.name == 'gp':
+                    assert src.name != 't6'
+                    yield f"    lui t6, %hi({gp_offset_int2[offset][0].dump_as_label()})"
+                    if gp_offset_int2[offset][1]: yield f"    addi t6, t6, {4 * gp_offset_int2[offset][1]}"
+                    yield f"    sw {src}, %lo({gp_offset_int2[offset][0].dump_as_label()})(t6)"
+                    # yield f"    sw {src}, {offset}({ptr}) \t# {', '.join(map(str, gp_offset_int[offset]))}"
+                elif offset > 2047 or offset < -2048:
+                    yield f"    li t6, {offset}"
+                    yield f"    add t6, {ptr}, t6"
+                    yield f"    sw {src}, 0(t6)"
+                else:
+                    yield f'    sw {src}, {offset}({ptr})'
             case MStore(True, PhyReg() as src, PhyReg() as ptr, offset):
-                yield f'    fsw {src}, {offset}({ptr})'
+                if ptr.name == 'gp':
+                    yield f"    lui t6, %hi({gp_offset_int2[offset][0].dump_as_label()})"
+                    if gp_offset_int2[offset][1]: yield f"    addi t6, t6, {4 * gp_offset_int2[offset][1]}"
+                    yield f"    fsw {src}, %lo({gp_offset_int2[offset][0].dump_as_label()})(t6)"
+                    # yield f"    fsw {src}, {offset}({ptr}) \t# {', '.join(map(str, gp_offset_int[offset]))}"
+                elif offset > 2047 or offset < -2048:
+                    yield f"    li t6, {offset}"
+                    yield f"    add t6, {ptr}, t6"
+                    yield f"    fsw {src}, 0(t6)"
+                else:
+                    yield f'    fsw {src}, {offset}({ptr})'
             case MStoreLo(False, PhyReg() as src, PhyReg() as ptr, lo):
                 yield f'    sw {src}, %lo({lo.dump_as_label()})({ptr})'
             case MStoreLo(True, PhyReg() as src, PhyReg() as ptr, lo):
                 yield f'    fsw {src}, %lo({lo.dump_as_label()})({ptr})'
 
             case MIf(PhyReg() | MEq() | MNeq() as cond, I() as br_true, I() as br_false, _is_float, _dst):
-                else_ = Id('else')
-                then_ = Id('then')
-                endif = Id('endif')
-                match cond:
-                    case PhyReg():
-                        yield f'    beqz {cond}, {else_.dump_as_label()}'
-                    case MEq(PhyReg() as s1, PhyReg() as s2, _):
-                        yield f'    bne {s1}, {s2}, {else_.dump_as_label()}'
-                    case MNeq(PhyReg() as s1, PhyReg() as s2, _):
-                        yield f'    beq {s1}, {s2}, {else_.dump_as_label()}'
-                    case _:
-                        raise NotImplementedError(cond)
-                yield f'{then_.dump_as_label()}:'
-                yield from self.emit_asm_instr(br_true, epilogue)
-                instrs_false = list(self.emit_asm_instr(br_false, epilogue))
-                if instrs_false:
-                    yield f'    j {endif.dump_as_label()}'
-                yield f'{else_.dump_as_label()}:'
-                yield from instrs_false
-                yield f'{endif.dump_as_label()}:'
+                
+                if not allow_longjmp:
+                    else0 = Id('else0')
+                    else_ = Id('else')
+                    then_ = Id('then')
+                    endif = Id('endif')
+                    match cond:
+                        case PhyReg():
+                            yield f'    beqz {cond}, {else0.dump_as_label()}'
+                        case MEq(PhyReg() as s1, PhyReg() as s2, _):
+                            yield f'    bne {s1}, {s2}, {else0.dump_as_label()}'
+                        case MNeq(PhyReg() as s1, PhyReg() as s2, _):
+                            yield f'    beq {s1}, {s2}, {else0.dump_as_label()}'
+                        case _:
+                            raise NotImplementedError(cond)
+                    yield f'    j {then_.dump_as_label()}'
+                    yield f'{else0.dump_as_label()}:'
+                    yield f'    j {else_.dump_as_label()}'
+                    yield f'{then_.dump_as_label()}:'
+                    yield from self.emit_asm_instr(br_true, epilogue, gp_offset_int, gp_offset_int2)
+                    instrs_false = list(self.emit_asm_instr(br_false, epilogue, gp_offset_int, gp_offset_int2))
+                    if instrs_false:
+                        yield f'    j {endif.dump_as_label()}'
+                    yield f'{else_.dump_as_label()}:'
+                    yield from instrs_false
+                    yield f'{endif.dump_as_label()}:'
+                else:
+                    else_ = Id('else')
+                    endif = Id('endif')
+                    match cond:
+                        case PhyReg():
+                            yield f'    beqz {cond}, {else_.dump_as_label()}'
+                        case MEq(PhyReg() as s1, PhyReg() as s2, _):
+                            yield f'    bne {s1}, {s2}, {else_.dump_as_label()}'
+                        case MNeq(PhyReg() as s1, PhyReg() as s2, _):
+                            yield f'    beq {s1}, {s2}, {else_.dump_as_label()}'
+                        case _:
+                            raise NotImplementedError(cond)
+                    yield from self.emit_asm_instr(br_true, epilogue, gp_offset_int, gp_offset_int2)
+                    instrs_false = list(self.emit_asm_instr(br_false, epilogue, gp_offset_int, gp_offset_int2))
+                    if instrs_false:
+                        yield f'    j {endif.dump_as_label()}'
+                    yield f'{else_.dump_as_label()}:'
+                    yield from instrs_false
+                    yield f'{endif.dump_as_label()}:'
             case MSeq(instrs):
                 for instr in instrs:
-                    yield from self.emit_asm_instr(instr, epilogue)
+                    yield from self.emit_asm_instr(instr, epilogue, gp_offset_int, gp_offset_int2)
             case MCall(MFunction() as callee, _, _, _tail, _, _):
                 yield f'    call {callee.funct.dump_as_label()}'
             case MCallIntrinsic(name, _tail, _is_float, _dst):

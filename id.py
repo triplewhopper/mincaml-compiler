@@ -27,8 +27,8 @@ class Id:
             return self.di_vars[self].name
         except KeyError:
             if self._descr:
-                return f"%.{self._id}<{self._descr}>"
-            return f"%.{self._id}"
+                return f".{self._id}_L{self._descr}_J"
+            return f".{self._id}"
 
     def __repr__(self):
         return f"<id {self._id}>"

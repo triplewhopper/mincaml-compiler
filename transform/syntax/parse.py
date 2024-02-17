@@ -371,7 +371,7 @@ class Parser:
                     return self.parse_if()
                 case Val(float() | bool() | int()) | Word('(' | '+' | '-' | '-.'):
                     return self.parse_cmp()
-                case Word(_) as w if w.is_ident():
+                case Word(_) as w if w.is_ident() or w.is_ident(True):
                     return self.parse_cmp()
                 case _:
                     raise UnexpectedTokenError(expected="expression", bounds=self.peek().bounds)

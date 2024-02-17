@@ -48,7 +48,7 @@ class Function:
                    f"{', '.join(f'({x}: {t})' for x, t in zip(self.formal_args, self.typ.args))} " \
                    f"(* formal_fv: {', '.join(f'({x}: {t})' for x, t in self.formal_fv)} *): {self.typ.ret} =\n{self.body}"
         return f"let rec {self.funct} " \
-               f"{', '.join(f'({x}: {t})' for x, t in zip(self.formal_args, self.typ.args))}: {self.typ.ret} =\n{self.body}"
+               f"{' '.join(f'({x}: {t})' for x, t in zip(self.formal_args, self.typ.args))}: {self.typ.ret} =\n{self.body}"
 
 class Lit(Exp[K.L]):
     __slots__ = 'metadata',
@@ -191,7 +191,13 @@ class Binary(Exp[Ty]):
         self.op, self.y1, self.y2 = op, y1, y2
 
     def __str__(self):
-        return f"({self.y1} {self.op} {self.y2})"
+        match self.op:
+            case BinaryOpKind.F_LT:
+                return f"(let (<) = fless in {self.y1} < {self.y2})"
+            case BinaryOpKind.F_EQ:
+                return f"(let (=) = fequal in {self.y1} = {self.y2})"
+            case _:
+                return f"({self.y1} {self.op} {self.y2})"
 
 
 class Tuple(Exp[TyTuple]):
@@ -322,5 +328,5 @@ class Program:
         self.exp_or_cls_or_letbindings = es
 
     def __str__(self):
-        return "\n".join(map(str, self.fns)) + "\n" + "\n".join(map(str, self.exp_or_cls_or_letbindings))
+        return ";;\n".join(map(str, self.fns)) + ";;\n" + ";;\n".join(map(str, self.exp_or_cls_or_letbindings))
 

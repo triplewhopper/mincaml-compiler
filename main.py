@@ -98,10 +98,7 @@ def main(*filenames: str):
     prog = Program(tuple(toplevel), *es)
     prog = inline(prog)
     with open(f"main.closure.ml", 'w') as f:
-        for fn in prog.fns:
-            print(fn, file=f)
-        for x in es:
-            print(x, file=f)
+        print(prog, file=f)
     builtins = prelude_tys | array_makes
     TypeCheck(builtins, cc.global_vars).test_program(prog)
     Count(builtins).set_globals(cc.global_vars).count_program(prog)
@@ -132,11 +129,12 @@ def main(*filenames: str):
         for x, i in main.global_var_addr.values():
             if x not in code:
                 asm_global_vars[x] = max(asm_global_vars.get(x, 0), i)
+        print(f'.data', file=f)
         for x, i in asm_global_vars.items():
             print(f'{x.dump_as_label()}:', file=f)
             print(f'    .zero {(1 + i) * 4}', file=f)
         for k, v in main.float_table.items():
-            print(f'{v.dump_as_label()}: .float {k}', file=f)
+            print(f'{v.dump_as_label()}:\n    .float {k}', file=f)
         
 
     return
@@ -163,6 +161,7 @@ if __name__ == '__main__':
     # path = 'samples/forever.ml',
     # path = 'samples/atomic.ml',
     # path = 'samples/ack.ml',
+    # path = 'samples/globalvarbug.ml',
     # path = sys.argv[1:]
     Bounds.srcs = list(path)
     main(*path)
