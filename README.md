@@ -33,3 +33,11 @@ options:
 
 $ python3.11 main.py test/globals2.ml test/minrt.ml -o main.s 
 ```
+### Append the runtime library
+```zsh
+$ cat runtime/arraymake.asm >> main.s
+```
+Then you can use simulator to run `main.s`. If simulator reports errors like `label not found: 'print_int'`, try
+```zsh
+$ cat runtime/misc.asm >> main.s
+```
