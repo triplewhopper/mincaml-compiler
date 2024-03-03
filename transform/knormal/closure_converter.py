@@ -113,7 +113,7 @@ class ClosureConverter:
             match self.known[node.callee]:
                 case None:
                     return cl.AppDir(node.callee, node.args, node.typ)
-                case f:
+                case _f:
                     # with get_adapter(bounds=node.callee.bounds) as adapter:
                     #     adapter.info(f"directly applying function '{node.callee}'")
                     return cl.AppDir(node.callee, node.args, node.typ)

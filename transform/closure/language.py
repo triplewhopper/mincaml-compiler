@@ -9,7 +9,7 @@ class Exp(HasTypMixin[T]):
     __slots__ = 'typ',
 
     def __init__(self, typ: T):
-        super(Exp, self).__init__(typ)
+        self.typ = typ
 
 
 class Cls:

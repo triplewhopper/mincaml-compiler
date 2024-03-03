@@ -15,10 +15,10 @@ class _Ty0(ABC):
     def __str__(self) -> str:
         ...
 
-    @property
-    @abstractmethod
-    def tv(self) -> frozenset['TyVar']:
-        ...
+    # @property
+    # @abstractmethod
+    # def tv(self) -> frozenset['TyVar']:
+    #     ...
 
 
 @final
@@ -41,7 +41,7 @@ class TyCon(_Ty0):
         "unit": None,
     }
 
-    def __new__(cls, name: str, *args: 'Ty0'):
+    def __new__(cls, name: str, /, *args: 'Ty0'):
         if name in cls._singleton_table:
             assert len(args) == 0
             if (o := cls._singleton_table[name]) is None:
@@ -120,15 +120,15 @@ class TyCon(_Ty0):
 
     __repr__ = __str__
 
-    @property
-    def tv(self) -> frozenset['TyVar']:
-        if self.__tv is not None:
-            return self.__tv
-        tv: set[TyVar] = set()
-        for arg in self.args:
-            tv |= arg.tv
-        self.__tv = frozenset(tv)
-        return self.__tv
+    # @property
+    # def tv(self) -> frozenset['TyVar']:
+    #     if self.__tv is not None:
+    #         return self.__tv
+    #     tv: set[TyVar] = set()
+    #     for arg in self.args:
+    #         tv |= arg.tv
+    #     self.__tv = frozenset(tv)
+    #     return self.__tv
 
 
 @final
@@ -156,9 +156,9 @@ class TyVar(_Ty0):
 
     __repr__ = __str__
 
-    @property
-    def tv(self) -> frozenset['TyVar']:
-        return self.__tv
+    # @property
+    # def tv(self) -> frozenset['TyVar']:
+    #     return self.__tv
 
 
 Ty0 = TyVar | TyCon

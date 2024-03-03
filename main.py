@@ -6,17 +6,14 @@ from bounds import Bounds
 from transform.syntax import Typing, Monomorphization, KNormalizer, KNormalizerTopLevel, knormalize, InferError, \
     ExternalVariableTypeError, \
     get_typing_adapter, ParseError
-# from transform.knormal import Beta, get_beta_adapter
-from transform.knormal import ClosureConverter #¯, get_closure_converter_adapter
-# from transform.knormal import Assoc, get_assoc_adapter
-# from transform.knormal import Disambiguate #, get_disambiguate_adapter
-# from transform.closure import IREmitter
-from transform.closure import Flatten
+from transform.knormal import ClosureConverter
 from metadata import DIScope
 from preludes import preludes, prelude_ty0s
-from transform.closure import TypeCheck, Program, Count, Select, LinearScan, AsmEmmiter, inline
+from transform.closure import TypeCheck, Program, LinearScan, LIRPrinter, inline, GraphBuilder, GraphPrinter, GraphVerifier, GraphOptimizer, Assembler
 import os
 import sys
+import argparse
+
 
 def parse(*filenames: str):
     scope = DIScope()
@@ -26,17 +23,17 @@ def parse(*filenames: str):
 
 
 def main(*filenames: str):
-
     assert len(set(filenames)) == len(filenames), "duplicate filenames"
     try:
         asts = parse(*filenames)
+    except RuntimeError as e:
+        exit(1)
     except ParseError as e:
         print(e.dump(), file=sys.stderr)
-        return
+        exit(1)
 
     typing_visitor = Typing(prelude_ty0s.copy())
 
-    
     try:
         ast_tys = {k: typing_visitor.infer(v) for k, v in asts.items()}
         Id.di_vars.clear()
@@ -68,100 +65,115 @@ def main(*filenames: str):
             with get_typing_adapter(typing_visitor.expr_visitor.di_vars[f].loc.get_bounds()) as adapter:
                 adapter.warning(
                     f"this function has type {t0}: uninstantiated type variables {' '.join(map(str, us))} detected")
-    print('number of user defined functions:', len(funcs))
-    for f in typing_visitor.funcs:
-        print(f"{repr(f)}({str(f)}): {funcs[f]}")
+    if argv.print_type:
+        print('number of user defined functions:', len(funcs))
+        for f in typing_visitor.funcs:
+            print(f"{repr(f)}({str(f)}): {funcs[f]}")
 
     k_normalizer = KNormalizerTopLevel(KNormalizer(mono, funcs))
     try:
         kns = knormalize(k_normalizer, **asts)
     except ExternalVariableTypeError:
         return
-    for filename in filenames:
-        with open(f"{filename.replace('.ml', '.knormal.ml')}", 'w') as f:
-            for x in k_normalizer.seq[filename]:
-                print(x, file=f)
-    # beta = BetaTopLevel()
-    # assoc = AssocTopLevel()
-    # for filename, kn in kns.items():
-    #     kn = beta.visit_TopLevel(kn)
-    #     kn = assoc.visit_TopLevel(kn)
-    #     with open(f"{filename.replace('.ml', '.assoc.ml')}", 'w') as f:
-    #         print(kn, file=f)
-    # disambiguate = Disambiguate(k_normalizer.known_ext_funcs)
-    # for kn in sum(kns.values(), []):
-    #     disambiguate.visit(kn)
+    if argv.print_knormal:
+        for filename in filenames:
+            with open(f"{filename.removesuffix('.ml')}.knormal.ml", 'w') as f:
+                for x in k_normalizer.seq[filename]:
+                    print(x, file=f)
+
     array_makes = {k: mono.visit(v)[0] for k, v in typing_visitor.expr_visitor.array_makes.items()}
     prelude_tys = {k: mono.visit(v)[0] for k, v in prelude_ty0s.items()}
     cc = ClosureConverter(prelude_tys | array_makes)
     toplevel, es = cc.convert(*sum(kns.values(), []))
     prog = Program(tuple(toplevel), *es)
-    prog = inline(prog)
-    with open(f"main.closure.ml", 'w') as f:
-        print(prog, file=f)
+    prog = inline(prog, argv.inline)
+    if argv.print_closure:
+        closure_ml = f"{argv.o.removesuffix('.s')}.closure.ml"
+        with open(closure_ml, 'w') as f:
+            print(prog, file=f)
     builtins = prelude_tys | array_makes
     TypeCheck(builtins, cc.global_vars).test_program(prog)
-    Count(builtins).set_globals(cc.global_vars).count_program(prog)
-    select = Select(prelude_tys, array_makes, cc.global_vars)
-    code, main = select.select_program(prog)
-    code = {main.funct: main, **code}
-    with open(os.path.dirname(filenames[0]) + '/main.s', 'w') as f:
-        for mf in code:
-            ls = LinearScan(set(prelude_tys) | set(am.funct for am in select.array_make_cache.values()), main.global_var_addr)
-            live_intervals, favor, live_across_call = ls.analyze_liveness(code[mf])
-            register, location = ls.linear_scan(code[mf])
-            print(f'function {mf}: {code[mf].typ}')
-            for i in live_intervals:
-                if i in register:
-                    print(f'  {i}: {live_intervals[i]}, live_across_call?: {live_across_call[i]}, {register[i]} {favor.get(i, "")}')
-                else:
-                    print(f'  {i}: {live_intervals[i]}, live_across_call?: {live_across_call[i]}, fp[{location[i]}] {favor.get(i, "")}')
-            asmemmiter = AsmEmmiter(builtins, cc.global_vars, main.global_var_addr)
-            asm = asmemmiter.emit_asm(register, location, code[mf])
-            print('\n'.join(asm), file=f)
+    # Count(builtins).set_globals(cc.global_vars).count_program(prog)
+    gm = GraphBuilder(prelude_tys, array_makes, cc.global_vars, prog)
+    gp = GraphPrinter()
+    gv = GraphVerifier()
+    go = GraphOptimizer()
+    out = open(argv.o, 'w')
+    for f in {gm.main.name: gm.main, **gm.functions}.values():
+        gv.verify(f)
+        go.remove_indirect_jumps(f.entry, set())
+        gv.verify(f)
+        go.remove_unused_values(f)
+        gv.verify(f)
+        go.loop_transformation(f)
+        gv.verify(f)
+        if gv.has_critical_edge(f):
+            go.split_critical_edges(f)
+            gv.verify(f)
+            assert not gv.has_critical_edge(f)
+        f.gen_lir()
+        ls = LinearScan(f)
+        ls.do_linear_scan()
+        filename = 'main' if f.name.is_main() else f.name
+        if argv.print_ir:
+            with open(f"{filename}.ir", 'w') as file:
+                gp.print_function(f, {b.block_id: b for b in ls.blocks}, file)
+                lp = LIRPrinter(file)
+                lp.print_function(ls)
 
-        for array_make in select.array_make_cache.values():
-            asmemmiter = AsmEmmiter(builtins, cc.global_vars, main.global_var_addr)
-            asm = asmemmiter.emit_asm({}, {}, array_make)
-            print('\n'.join(asm), file=f)
-        
-        asm_global_vars: dict[Id, int] = {}
-        for x, i in main.global_var_addr.values():
-            if x not in code:
-                asm_global_vars[x] = max(asm_global_vars.get(x, 0), i)
-        print(f'.data', file=f)
-        for x, i in asm_global_vars.items():
-            print(f'{x.dump_as_label()}:', file=f)
-            print(f'    .zero {(1 + i) * 4}', file=f)
-        for k, v in main.float_table.items():
-            print(f'{v.dump_as_label()}:\n    .float {k}', file=f)
-        
+        asm = Assembler(ls)
+        out.write('\n'.join(asm.emit_function()))
+        out.write('\n')
 
+    out.write('\n')
+    for k, v in gm.globals.items():
+        out.write(f".globl {k}\n{k}: \n    .zero {v.abi_size * 4}\n\n")
+
+    from struct import pack, unpack
+    for k, v in Assembler.float_table.items():
+        k = unpack('f', pack('f', k))[0]
+        out.write(f".globl {v}\n{v}: \n    .float {repr(k)}\n\n")
+    out.close()
     return
-    flatten = Flatten()
-    flatten.emit(k_normalizer.known_ext_funcs, k_normalizer.known_global_vars, toplevel, es)
-    # ir_emitter = IREmitter()
-    # ir_emitter.emit(k_normalizer.known_ext_funcs, k_normalizer.known_global_vars, toplevel, es)
 
-    # with open(os.path.dirname(filenames[0]) + '/main.ll', 'w') as f:
-    #     print(ir_emitter.module, file=f)
 
-    with open(os.path.dirname(filenames[0]) + '/main.my.ll', 'w') as f:
-        flatten.dump(f)
+def inline_size(x: str):
+    x_ = int(x)
+    if x_ < 0 or 20 < x_:
+        raise argparse.ArgumentTypeError("inline size must be in the range [0, 20]")
+    return x_
 
+
+def output_file(x: str):
+    if not x.endswith('.s'):
+        raise argparse.ArgumentTypeError("output file must end with '.s'")
+    return x
+
+
+argparser = argparse.ArgumentParser(description="MinCaml compiler, version 1.0.0")
+argparser.add_argument('files', nargs='+', help='input files')
+argparser.add_argument('--version', action='version', version='%(prog)s 1.0.0')
+argparser.add_argument('-o', metavar='FILE', type=output_file, help='output file. If not specified, the last file is used with the .s extension')
+argparser.add_argument('--inline',
+                       metavar='SIZE', type=inline_size,
+                       help='max size of function to inline, must be in the range [0, 20]. default 20.', default=20)
+argparser.add_argument('--print-ir', action='store_true', help="""
+generate a .ir file for each function, containing the HIR, LIR, and the register allocation result.
+""")
+argparser.add_argument('--print-knormal', action='store_true', help='print the k-normalized program separately for each file')
+argparser.add_argument('--print-closure', action='store_true',
+                       help='print the closure-converted program to <last file or \'-o\'-specified file>.closure.ml')
+argparser.add_argument('--print-type', action='store_true', help='print the type of each function')
 
 if __name__ == '__main__':
-    # assert len(sys.argv) >= 2
-    # assert all(arg.endswith('.ml') for arg in sys.argv[1:])
-    # main(sys.argv[1])
-    path = 'samples/raytracer/globals2.ml', 'samples/raytracer/minrt.ml',
-    # path = 'test/toomanyargs.ml',
-    # path = 'samples/highorder.ml',
-    # path = 'samples/fib.ml',
-    # path = 'samples/forever.ml',
-    # path = 'samples/atomic.ml',
-    # path = 'samples/ack.ml',
-    # path = 'samples/globalvarbug.ml',
-    # path = sys.argv[1:]
+    argv = argparser.parse_args(sys.argv[1:])
+
+    if (arg := next((arg for arg in argv.files if not arg.endswith('.ml')), None)) is not None:
+        print(f"error: {arg}: must end with '.ml'", file=sys.stderr)
+        sys.exit(1)
+    if argv.o is None:
+        argv.o = f"{argv.files[-1].removesuffix('.ml')}.s"
+    print(argv)
+    path = argv.files
     Bounds.srcs = list(path)
     main(*path)

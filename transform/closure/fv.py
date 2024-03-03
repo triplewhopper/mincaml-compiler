@@ -13,33 +13,8 @@ class Fv:
     def fv(self) -> frozenset[Id]:
         assert all(isinstance(x, Id) for x in self.__fv)
         return frozenset(self.__fv)
-
-    # def __do_nothing(self, node: Exp) -> None:
-    #     pass
-
-    # @staticmethod
-    # def __gen_fv_fn(acc_fvs: tuple[str, ...] = (), iter_acc_fvs: tuple[str, ...] = (), visits: tuple[str, ...] = ()):
-    #     def f(self: Self, node: Exp) -> None:
-    #         for x in acc_fvs:
-    #             y = getattr(node, x)
-    #             assert isinstance(y, Id)
-    #             y.acc_fv(self.__fv)
-
-    #         for x in iter_acc_fvs:
-    #             y = getattr(node, x)
-    #             assert isinstance(y, Iterable)
-    #             for z in y:
-    #                 assert isinstance(z, Id)
-    #                 z.acc_fv(self.__fv)
-
-    #         for x in visits:
-    #             y = getattr(node, x)
-    #             assert isinstance(y, Exp)
-    #             self.visit(y)
-
-    #     return f
     
-    def visit(self, node: Exp[Ty] | Cls | LetBinding) -> None:
+    def visit(self, node: Exp[Ty] | Cls | LetBinding, /) -> None:
         def acc_fvs(*xs: Id):
             self.__fv.update(xs)
         match node:
@@ -87,58 +62,3 @@ class Fv:
                 self.visit(rhs)
             case _:
                 raise ValueError(node)
-
-    # visit_Lit = __do_nothing
-
-    # def visit_Var(self, node: Var) -> None:
-    #     self.__fv.add(node.name)
-
-    # visit_Ext = __do_nothing
-    # # visit_ExtArray = __do_nothing
-    # # visit_ExtFun = __do_nothing
-
-    # visit_Get = __gen_fv_fn(('array', 'index'))
-
-    # visit_Unary = __gen_fv_fn(('y',))
-
-    # visit_AppCls = __gen_fv_fn(('callee',), ('args',))
-
-    # def visit_AppDir(self, node: AppDir):
-    #     for x in node.args:
-    #         x.acc_fv(self.__fv)
-
-    # visit_Binary = __gen_fv_fn(('y1', 'y2'))
-
-    # def visit_Seq(self, node: Seq) -> None:
-    #     for e in reversed(node.es):
-    #         self.visit(e)
-
-    # visit_Tuple = __gen_fv_fn((), iter_acc_fvs=('ys',))
-
-    # visit_Put = __gen_fv_fn(('array', 'index', 'value'))
-
-    # visit_If = __gen_fv_fn(('cond',), visits=('br_true', 'br_false'))
-
-    # def visit_Let(self, node: Let) -> None:
-    #     self.visit(node.expr)
-    #     node.binding.lhs.rm_fv(self.__fv)
-    #     self.visit(node.binding.rhs)
-
-    # def visit_LetBinding(self, binding: LetBinding) -> None:
-    #     binding.lhs.rm_fv(self.__fv)
-    #     self.visit(binding.rhs)
-
-    # def visit_LetTuple(self, node: LetTuple) -> None:
-    #     self.visit(node.e)
-    #     for x in node.xs:
-    #         self.__fv.discard(x)
-    #     node.y.acc_fv(self.__fv)
-
-    # def visit_MakeCls(self, node: MakeCls) -> None:
-    #     self.visit(node.body)
-    #     self.__fv.update(node.closure.actual_fv)
-    #     self.__fv.discard(node.closure.entry.funct)
-
-    # def visit_Cls(self, c: Cls) -> None:
-    #     self.__fv.update(c.actual_fv)
-    #     self.__fv.discard(c.entry.funct)

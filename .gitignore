@@ -1,5 +1,5 @@
 .DS_Store
-__pycache__
+**/__pycache__
 .mypy_cache
 .vscode
 llvm
@@ -22,3 +22,5 @@ samples/
 **/*.out
 **/*.assoc.ml
 test/
+transform/deprecated/
+assembler/

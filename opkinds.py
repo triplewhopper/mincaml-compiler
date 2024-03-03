@@ -1,18 +1,18 @@
-import enum
+from enum import Enum, auto, unique
 import functools
 from typing import Literal
 from ty import TyFun, TyBool, TyInt, TyFloat
 
-binary_operators = {'+', '+.', '-', '-.', '*', '*.', '/', '/.', '<', '<=', '>', '>=', '=', '<>'}
-literal_binary = Literal['+', '+.', '-', '-.', '*', '*.', '/', '/.', '<', '<=', '>', '>=', '=', '<>']
+binary_operators = {'+', '+.', '-', '-.', '*', '*.', '/', '/.', '<', '<=', '>', '>=', '=', '<>', 'lsl', 'asr', 'land', 'lor', 'lxor'}
+literal_binary = Literal['+', '+.', '-', '-.', '*', '*.', '/', '/.', '<', '<=', '>', '>=', '=', '<>', 'lsl', 'asr', 'land', 'lor', 'lxor']
 unary_operators = ('-', '-.')
 literal_unary = Literal['-', '-.']
 
 
-@enum.unique
-class UnaryOpKind(enum.Enum):
-    I_NEG = 1
-    F_NEG = 2
+@unique
+class UnaryOpKind(Enum):
+    I_NEG = auto()
+    F_NEG = auto()
 
     @property
     @functools.lru_cache
@@ -31,43 +31,50 @@ class UnaryOpKind(enum.Enum):
                 return "-."
 
 
-@enum.unique
-class BinaryOpKind(enum.Enum):
-    I_ADD = 1
-    I_SUB = 2
-    I_MUL = 3
-    I_DIV = 4
+@unique
+class BinaryOpKind(Enum):
+    I_ADD = auto()
+    I_SUB = auto()
+    I_MUL = auto()
+    I_DIV = auto()
 
-    F_ADD = 5
-    F_SUB = 6
-    F_MUL = 8
-    F_DIV = 9
+    I_SHL = auto()
+    I_SHR = auto()
 
-    I_LT = 10
-    F_LT = 11
+    I_AND = auto()
+    I_OR = auto()
+    I_XOR = auto()
 
-    I_LE = 12
-    F_LE = 13
+    F_ADD = auto()
+    F_SUB = auto()
+    F_MUL = auto()
+    F_DIV = auto()
 
-    I_EQ = 14
-    F_EQ = 15
-    B_EQ = 16
+    I_LT = auto()
+    F_LT = auto()
 
-    I_NEQ = 17
-    F_NEQ = 18
-    B_NEQ = 19
+    I_LE = auto()
+    F_LE = auto()
 
-    I_GE = 20
-    F_GE = 21
+    I_EQ = auto()
+    F_EQ = auto()
+    B_EQ = auto()
 
-    I_GT = 22
-    F_GT = 23
+    I_NEQ = auto()
+    F_NEQ = auto()
+    B_NEQ = auto()
+
+    I_GE = auto()
+    F_GE = auto()
+
+    I_GT = auto()
+    F_GT = auto()
 
     @property
     @functools.lru_cache
     def typ(self):
         match self:
-            case BinaryOpKind.I_ADD | BinaryOpKind.I_SUB | BinaryOpKind.I_MUL | BinaryOpKind.I_DIV:
+            case BinaryOpKind.I_ADD | BinaryOpKind.I_SUB | BinaryOpKind.I_MUL | BinaryOpKind.I_DIV | BinaryOpKind.I_SHL | BinaryOpKind.I_SHR | BinaryOpKind.I_AND | BinaryOpKind.I_OR | BinaryOpKind.I_XOR:
                 return TyFun(TyInt(), TyInt(), TyInt())
             case BinaryOpKind.I_LT | BinaryOpKind.I_LE | BinaryOpKind.I_EQ | BinaryOpKind.I_NEQ | BinaryOpKind.I_GE | BinaryOpKind.I_GT:
                 return TyFun(TyInt(), TyInt(), TyBool())
@@ -88,6 +95,16 @@ class BinaryOpKind(enum.Enum):
                 return "*"
             case BinaryOpKind.I_DIV:
                 return "/"
+            case BinaryOpKind.I_SHL:
+                return "lsl"
+            case BinaryOpKind.I_SHR:
+                return "asr"
+            case BinaryOpKind.I_AND:
+                return "land"
+            case BinaryOpKind.I_OR:
+                return "lor"
+            case BinaryOpKind.I_XOR:
+                return "lxor"
             case BinaryOpKind.F_ADD:
                 return "+."
             case BinaryOpKind.F_SUB:
