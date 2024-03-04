@@ -31,7 +31,7 @@ options:
   --print-closure  print the closure-converted program to <last file or '-o'-specified file>.closure.ml
   --print-type     print the type of each function
 
-$ python3.11 main.py test/globals2.ml test/minrt.ml -o main.s 
+$ python3.11 main.py test/minrt/globals2.ml test/minrt/minrt.ml -o main.s 
 ```
 ### Append the runtime library
 ```zsh
