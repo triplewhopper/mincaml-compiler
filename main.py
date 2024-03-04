@@ -99,6 +99,7 @@ def main(*filenames: str):
     gv = GraphVerifier()
     go = GraphOptimizer()
     out = open(argv.o, 'w')
+    out_buf: dict[str, str] = {}
     for f in {gm.main.name: gm.main, **gm.functions}.values():
         gv.verify(f)
         go.remove_indirect_jumps(f.entry, set())
@@ -122,10 +123,20 @@ def main(*filenames: str):
                 lp.print_function(ls)
 
         asm = Assembler(ls)
-        out.write('\n'.join(asm.emit_function()))
+        if not f.name.is_main():
+            assert str(f.name) not in out_buf
+            out_buf[str(f.name)] = '\n'.join(asm.emit_function())
+        else:
+            assert 'main' not in out_buf
+            out_buf['main'] = '\n'.join(asm.emit_function())
+            
+    out.write(out_buf['main'])
+    out.write('\n')
+    del out_buf['main']
+    for k, v in sorted(out_buf.items(), key=lambda x: x[0]):
+        out.write(v)
         out.write('\n')
 
-    out.write('\n')
     from struct import pack, unpack
     for k, v in Assembler.float_table.items():
         k = unpack('f', pack('f', k))[0]
