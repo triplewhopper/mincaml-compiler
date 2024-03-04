@@ -126,13 +126,14 @@ def main(*filenames: str):
         out.write('\n')
 
     out.write('\n')
-    for k, v in gm.globals.items():
-        out.write(f".globl {k}\n{k}: \n    .zero {v.abi_size * 4}\n\n")
-
     from struct import pack, unpack
     for k, v in Assembler.float_table.items():
         k = unpack('f', pack('f', k))[0]
         out.write(f".globl {v}\n{v}: \n    .float {repr(k)}\n\n")
+        
+    for k, v in gm.globals.items():
+        out.write(f".globl {k}\n{k}: \n    .zero {v.abi_size * 4}\n\n")
+
     out.close()
     return
 
@@ -173,7 +174,6 @@ if __name__ == '__main__':
         sys.exit(1)
     if argv.o is None:
         argv.o = f"{argv.files[-1].removesuffix('.ml')}.s"
-    print(argv)
     path = argv.files
     Bounds.srcs = list(path)
     main(*path)
