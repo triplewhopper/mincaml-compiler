@@ -8,7 +8,7 @@ Please ensure that `python3.11` is available. If not, please change the `python3
 
 ### Building lexer
 ```zsh
-$ make lex
+$ make lexer
 ```
 
 ### Compile .ml file
