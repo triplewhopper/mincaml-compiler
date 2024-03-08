@@ -1,3 +1,7 @@
+# What is MinCaml
+check [here](https://github.com/esumii/min-caml/tree/master).
+
+
 # How to build
 
 ## Prerequisites
@@ -37,7 +41,7 @@ $ python3.11 main.py test/minrt/globals2.ml test/minrt/minrt.ml -o main.s
 ```zsh
 $ cat runtime/arraymake.asm >> main.s
 ```
-Then you can use simulator to run `main.s`. If simulator reports errors like `label not found: 'print_int'`, try
+Then you can use [simulator](https://github.com/shinnosukeono/cpuex2023-group8/tree/simu/simulator/submit5/assemble_and_simu) to run `main.s`. If simulator reports errors like `label not found: 'print_int'`, try
 ```zsh
 $ cat runtime/misc.asm >> main.s
 ```
